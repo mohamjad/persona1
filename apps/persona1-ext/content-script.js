@@ -21,6 +21,9 @@ const CMD = {
 };
 
 const PRESETS = ["date", "pitch", "negotiate", "apologize", "reconnect", "confront", "close", "decline"];
+const alreadyLoaded = Boolean(globalThis.__persona1ContentScriptLoaded);
+
+globalThis.__persona1ContentScriptLoaded = true;
 
 let currentContext = null;
 let currentComposeTarget = null;
@@ -31,14 +34,20 @@ let panel = null;
 let observer = null;
 let panelState = { extensionState: null, analysis: null, selectedBranch: null, lastDraft: "", manualFallback: false };
 
-boot();
+if (!alreadyLoaded) {
+  boot();
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  void onMessage(message)
-    .then((result) => sendResponse(result))
-    .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : "Content script error." }));
-  return true;
-});
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    void onMessage(message)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : "Content script error." }));
+    return true;
+  });
+} else {
+  try {
+    globalThis.__persona1RefreshContext?.();
+  } catch {}
+}
 
 function boot() {
   if (document.readyState === "loading") {
@@ -95,6 +104,8 @@ function refreshContext() {
     renderComposeSection();
   }
 }
+
+globalThis.__persona1RefreshContext = refreshContext;
 
 function sanitizeContext(detected) {
   return {

@@ -48,19 +48,22 @@ try {
     ]
   });
 
+  let [serviceWorker] = context.serviceWorkers();
+  if (!serviceWorker) {
+    serviceWorker = await context.waitForEvent("serviceworker");
+  }
+
   const page = await context.newPage();
   await page.goto(pageUrl, { waitUntil: "domcontentloaded" });
   const composeLocator = page.locator('textarea[placeholder="Type here"]');
   await composeLocator.click();
 
-  await page.waitForFunction(() => {
-    const host = document.querySelector('[data-persona1-root]');
-    return Boolean(host && host.shadowRoot?.querySelector("button"));
-  });
-
-  await page.evaluate(() => {
-    const host = document.querySelector('[data-persona1-root]');
-    host.shadowRoot.querySelector("button").click();
+  await page.bringToFront();
+  await serviceWorker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return chrome.tabs.sendMessage(tab.id, {
+      type: "persona1:toggle-embedded-panel"
+    });
   });
 
   await page.waitForFunction(() => {

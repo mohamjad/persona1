@@ -234,26 +234,108 @@ async function handleCheckoutRequest(payload) {
 
 async function toggleEmbeddedPanel(tabId) {
   if (!tabId) {
-    return;
+    return { ok: false, error: "No active tab." };
   }
 
-  await chrome.tabs.sendMessage(tabId, {
+  const ensured = await ensureWorkspaceRuntime(tabId);
+  if (!ensured.ok) {
+    return ensured;
+  }
+
+  const response = await chrome.tabs.sendMessage(tabId, {
     type: "persona1:toggle-embedded-panel"
-  }).catch(() => null);
+  }).catch((error) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : "Could not open the workspace on this tab."
+  }));
+
+  return response || {
+    ok: false,
+    error: "The workspace did not respond."
+  };
 }
 
 async function sendWorkspaceCommand(tabId, command) {
   if (!tabId) {
-    return;
+    return { ok: false, error: "No active tab." };
   }
 
-  await chrome.tabs.sendMessage(tabId, {
+  const ensured = await ensureWorkspaceRuntime(tabId);
+  if (!ensured.ok) {
+    return ensured;
+  }
+
+  const response = await chrome.tabs.sendMessage(tabId, {
     type: "persona1:workspace-command",
     command
-  }).catch(() => null);
+  }).catch((error) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : "Could not send the workspace command."
+  }));
+
+  return response || { ok: true };
 }
 
 async function getActiveTabId() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.id;
+}
+
+async function ensureWorkspaceRuntime(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab?.id) {
+    return {
+      ok: false,
+      error: "Could not find the active tab."
+    };
+  }
+
+  if (isRestrictedUrl(tab.url)) {
+    return {
+      ok: false,
+      error: "The workspace cannot run on this Chrome page. Open Gmail, LinkedIn, or another normal web page."
+    };
+  }
+
+  const existing = await chrome.tabs
+    .sendMessage(tab.id, {
+      type: MESSAGE_TYPES.getPageSnapshot
+    })
+    .then(() => ({ ok: true }))
+    .catch(() => null);
+
+  if (existing?.ok) {
+    return existing;
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["content-script.js"]
+  }).catch(() => null);
+
+  const retried = await chrome.tabs
+    .sendMessage(tab.id, {
+      type: MESSAGE_TYPES.getPageSnapshot
+    })
+    .then(() => ({ ok: true }))
+    .catch(() => ({
+      ok: false,
+      error: "The workspace could not attach to this tab. Refresh the page once and try again."
+    }));
+
+  return retried;
+}
+
+function isRestrictedUrl(url) {
+  if (!url) {
+    return true;
+  }
+
+  return (
+    url.startsWith("chrome://") ||
+    url.startsWith("chrome-extension://") ||
+    url.startsWith("edge://") ||
+    url.startsWith("about:") ||
+    url.startsWith("view-source:")
+  );
 }
