@@ -7,8 +7,7 @@ const MSG = {
   setColdStartContext: "persona1:set-cold-start-context",
   analyzeConversation: "persona1:analyze-conversation",
   recordOptionSelection: "persona1:record-option-selection",
-  recordOutcome: "persona1:record-outcome",
-  startCheckout: "persona1:start-checkout"
+  recordOutcome: "persona1:record-outcome"
 };
 
 const CMD = {
@@ -21,26 +20,43 @@ const CMD = {
 };
 
 const PRESETS = ["date", "pitch", "negotiate", "apologize", "reconnect", "confront", "close", "decline"];
+const ROOT_ATTR = "data-persona1-root";
 const alreadyLoaded = Boolean(globalThis.__persona1ContentScriptLoaded);
 
 globalThis.__persona1ContentScriptLoaded = true;
 
-let currentContext = null;
-let currentComposeTarget = null;
-let shadowHost = null;
-let shellRoot = null;
-let chip = null;
-let panel = null;
-let observer = null;
-let panelState = { extensionState: null, analysis: null, selectedBranch: null, lastDraft: "", manualFallback: false };
+const state = {
+  currentContext: null,
+  currentComposeTarget: null,
+  extensionState: null,
+  shadowHost: null,
+  shellRoot: null,
+  hudOpen: false,
+  observer: null,
+  refreshTimer: null,
+  analysis: null,
+  selectedOptionId: null,
+  activePreset: "pitch",
+  lastDraft: "",
+  pendingAnalyzeAfterOnboarding: false,
+  isAnalyzing: false,
+  status: "",
+  error: "",
+  lastAppliedBranch: null
+};
 
 if (!alreadyLoaded) {
-  boot();
+  bootContentScript();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     void onMessage(message)
       .then((result) => sendResponse(result))
-      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : "Content script error." }));
+      .catch((error) =>
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : "Content script error."
+        })
+      );
     return true;
   });
 } else {
@@ -49,41 +65,50 @@ if (!alreadyLoaded) {
   } catch {}
 }
 
-function boot() {
+function bootContentScript() {
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start, { once: true });
     return;
   }
+
   start();
 }
 
 function start() {
   refreshContext();
+  installObserver();
   window.addEventListener("focusin", refreshContext, true);
   window.addEventListener("click", refreshContext, true);
-  window.addEventListener("keyup", refreshContext, true);
-  window.setInterval(refreshContext, 1500);
-  installObserver();
+  window.addEventListener("input", onInputEvent, true);
+  window.addEventListener("keydown", onGlobalKeydown, true);
+  window.addEventListener("resize", renderUi, true);
+  window.addEventListener("scroll", renderUi, true);
+  state.refreshTimer = window.setInterval(refreshContext, 1200);
 }
 
 async function onMessage(message) {
   if (message?.type === MSG.getPageSnapshot) {
     refreshContext();
-    return { ok: true, snapshot: currentContext };
+    return { ok: true, snapshot: snapshotContext() };
   }
 
   if (message?.type === MSG.insertSelectedMessage) {
     refreshContext();
-    if (!currentComposeTarget) {
+    if (!state.currentComposeTarget) {
       return { ok: false, error: "No active compose target found." };
     }
-    return { ok: insertComposeValue(currentComposeTarget, message.value) };
+
+    return { ok: insertComposeValue(state.currentComposeTarget, message.value) };
   }
 
   if (message?.type === MSG.toggleEmbeddedPanel) {
     refreshContext();
-    await togglePanel(true);
-    return { ok: true, open: Boolean(panel) };
+    await openHud({
+      analyzeImmediately: false,
+      allowWithoutCompose: true,
+      toggleIfOpen: true
+    });
+    return { ok: true, open: state.hudOpen };
   }
 
   if (message?.type === MSG.workspaceCommand) {
@@ -95,17 +120,697 @@ async function onMessage(message) {
   return { ok: false, error: "Unknown content message." };
 }
 
-function refreshContext() {
-  const detected = detectComposeContext(document);
-  currentComposeTarget = detected?.composeNode || null;
-  currentContext = detected ? sanitizeContext(detected) : null;
-  syncChip();
-  if (panel) {
-    renderComposeSection();
+async function handleWorkspaceCommand(command) {
+  if (command === CMD.collapse) {
+    closeHud();
+    return;
+  }
+
+  if (command === CMD.analyze) {
+    await openHud({
+      analyzeImmediately: true,
+      allowWithoutCompose: true,
+      toggleIfOpen: false
+    });
+    return;
+  }
+
+  if (command === CMD.copy) {
+    if (state.selectedOptionId) {
+      await copyBranch(state.selectedOptionId);
+    }
+    return;
+  }
+
+  const optionId =
+    command === CMD.select1 ? 1 : command === CMD.select2 ? 2 : command === CMD.select3 ? 3 : null;
+  if (optionId) {
+    await useBranch(optionId);
   }
 }
 
+function onInputEvent(event) {
+  if (!isComposeNode(event.target)) {
+    return;
+  }
+
+  refreshContext();
+  if (state.hudOpen) {
+    state.lastDraft = normalizeComposeValue(state.currentComposeTarget);
+    renderUi();
+  }
+}
+
+async function onGlobalKeydown(event) {
+  const composing =
+    isComposeNode(event.target) || isComposeNode(document.activeElement) || Boolean(state.currentComposeTarget);
+  const openHotkey = (event.ctrlKey || event.metaKey) && event.shiftKey && event.code === "Space";
+  if (openHotkey && composing) {
+    event.preventDefault();
+    await openHud({
+      analyzeImmediately: true,
+      allowWithoutCompose: false,
+      toggleIfOpen: false
+    });
+    return;
+  }
+
+  if (!state.hudOpen) {
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeHud();
+    return;
+  }
+
+  if (!state.analysis || state.isAnalyzing) {
+    return;
+  }
+
+  if (event.key === "1" || event.key === "2" || event.key === "3") {
+    event.preventDefault();
+    await useBranch(Number(event.key));
+    return;
+  }
+
+  if (
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !isComposeNode(event.target)
+  ) {
+    event.preventDefault();
+    await useBranch(state.selectedOptionId || recommendedOptionId(state.analysis.branches));
+  }
+}
+
+function refreshContext() {
+  const detected = detectComposeContext(document);
+  state.currentComposeTarget = detected?.composeNode || null;
+  state.currentContext = detected ? sanitizeContext(detected) : null;
+  state.lastDraft = normalizeComposeValue(state.currentComposeTarget);
+  renderUi();
+}
+
 globalThis.__persona1RefreshContext = refreshContext;
+
+function snapshotContext() {
+  if (!state.currentContext) {
+    return null;
+  }
+
+  return {
+    ...state.currentContext,
+    draft: state.lastDraft
+  };
+}
+
+async function openHud(input = {}) {
+  const { analyzeImmediately = false, allowWithoutCompose = false, toggleIfOpen = false } = input;
+  if (toggleIfOpen && state.hudOpen) {
+    closeHud();
+    return;
+  }
+
+  refreshContext();
+  if (!state.currentComposeTarget && !allowWithoutCompose) {
+    state.error = "focus a real compose box first.";
+    state.status = "";
+    state.hudOpen = true;
+    await loadExtensionState();
+    renderUi();
+    return;
+  }
+
+  state.hudOpen = true;
+  state.error = "";
+  state.status = analyzeImmediately ? "reading the board..." : "ready.";
+  await loadExtensionState();
+  renderUi();
+
+  if (!state.extensionState?.onboardingDone) {
+    state.pendingAnalyzeAfterOnboarding = analyzeImmediately;
+    renderUi();
+    return;
+  }
+
+  if (analyzeImmediately) {
+    await analyzeCurrentDraft();
+  }
+}
+
+function closeHud() {
+  state.hudOpen = false;
+  state.isAnalyzing = false;
+  state.pendingAnalyzeAfterOnboarding = false;
+  state.status = "";
+  state.error = "";
+  state.analysis = null;
+  state.selectedOptionId = null;
+  state.lastAppliedBranch = null;
+  renderUi();
+}
+
+async function loadExtensionState() {
+  if (state.extensionState) {
+    return state.extensionState;
+  }
+
+  const response = await chrome.runtime.sendMessage({ type: MSG.getExtensionState });
+  if (!response?.ok) {
+    throw new Error(response?.error || "Could not load extension state.");
+  }
+
+  state.extensionState = response.state;
+  state.activePreset = chooseDefaultPreset(response.state);
+  return state.extensionState;
+}
+
+function chooseDefaultPreset(extensionState) {
+  if (extensionState?.coldStartContext === "dating") {
+    return "date";
+  }
+  if (extensionState?.coldStartContext === "professional") {
+    return "pitch";
+  }
+  return "pitch";
+}
+
+async function analyzeCurrentDraft() {
+  await loadExtensionState();
+  const draft = normalizeComposeValue(state.currentComposeTarget).trim();
+  state.lastDraft = draft;
+
+  if (!draft) {
+    state.error = "write a draft first.";
+    state.status = "";
+    renderUi();
+    return;
+  }
+
+  if (!state.currentContext) {
+    state.error = "context is not available yet.";
+    state.status = "";
+    renderUi();
+    return;
+  }
+
+  state.isAnalyzing = true;
+  state.error = "";
+  state.status = "building move tree...";
+  renderUi();
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: MSG.analyzeConversation,
+      payload: {
+        draft,
+        preset: state.activePreset,
+        context: toRecipientContext(state.currentContext)
+      }
+    });
+
+    if (!response?.ok) {
+      if (response?.requiresOnboarding) {
+        state.pendingAnalyzeAfterOnboarding = true;
+      }
+      state.error = response?.error || "analysis failed.";
+      state.status = "";
+      state.isAnalyzing = false;
+      renderUi();
+      return;
+    }
+
+    state.extensionState = {
+      ...(state.extensionState || {}),
+      usageCount: response.usageCount,
+      onboardingDone: true
+    };
+    state.analysis = response.analysis;
+    state.selectedOptionId = recommendedOptionId(response.analysis.branches);
+    state.lastAppliedBranch = null;
+    state.error = "";
+    state.status = response.analysis?.draftAssessment?.reason || "move tree ready.";
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : "analysis failed.";
+    state.status = "";
+  } finally {
+    state.isAnalyzing = false;
+    renderUi();
+  }
+}
+
+async function chooseColdStart(coldStartContext) {
+  const response = await chrome.runtime.sendMessage({
+    type: MSG.setColdStartContext,
+    coldStartContext
+  });
+
+  if (!response?.ok) {
+    state.error = response?.error || "could not save the starting context.";
+    renderUi();
+    return;
+  }
+
+  state.extensionState = {
+    ...(state.extensionState || {}),
+    onboardingDone: true,
+    coldStartContext,
+    userId: response.userId,
+    persona: response.persona,
+    usageCount: state.extensionState?.usageCount || 0,
+    plan: state.extensionState?.plan || "free",
+    mirrorInsights: state.extensionState?.mirrorInsights || []
+  };
+  state.activePreset = chooseDefaultPreset(state.extensionState);
+  state.error = "";
+  state.status = "cold start saved.";
+  renderUi();
+
+  if (state.pendingAnalyzeAfterOnboarding) {
+    state.pendingAnalyzeAfterOnboarding = false;
+    await analyzeCurrentDraft();
+  }
+}
+
+async function useBranch(optionId) {
+  const branch = state.analysis?.branches?.find((candidate) => candidate.optionId === optionId);
+  if (!branch) {
+    return;
+  }
+
+  state.selectedOptionId = optionId;
+  const inserted = state.currentComposeTarget ? insertComposeValue(state.currentComposeTarget, branch.message) : false;
+  state.status = inserted ? `${branch.moveLabel.toLowerCase()} inserted.` : `option ${optionId} copied.`;
+  state.error = "";
+  state.lastAppliedBranch = branch;
+
+  if (!inserted) {
+    await copyText(branch.message);
+  }
+
+  renderUi();
+
+  await chrome.runtime.sendMessage({
+    type: MSG.recordOptionSelection,
+    payload: interactionPayload(branch, "unknown", branch.isRecommended ? ["trusted_recommended_branch"] : [])
+  });
+}
+
+async function copyBranch(optionId) {
+  const branch = state.analysis?.branches?.find((candidate) => candidate.optionId === optionId);
+  if (!branch) {
+    return;
+  }
+
+  await copyText(branch.message);
+  state.selectedOptionId = optionId;
+  state.status = `option ${optionId} copied.`;
+  state.error = "";
+  renderUi();
+}
+
+async function recordOutcome(outcome) {
+  if (!state.lastAppliedBranch) {
+    state.error = "pick a move first.";
+    renderUi();
+    return;
+  }
+
+  const response = await chrome.runtime.sendMessage({
+    type: MSG.recordOutcome,
+    payload: interactionPayload(
+      state.lastAppliedBranch,
+      outcome,
+      state.lastAppliedBranch.isRecommended ? ["trusted_recommended_branch"] : []
+    )
+  });
+
+  if (!response?.ok) {
+    state.error = response?.error || "could not record the outcome.";
+    renderUi();
+    return;
+  }
+
+  state.extensionState = {
+    ...(state.extensionState || {}),
+    persona: response.persona,
+    mirrorInsights: response.mirrorInsights
+  };
+  state.status = "outcome captured.";
+  state.error = "";
+  renderUi();
+}
+
+function interactionPayload(branch, outcome, observedSignals) {
+  return {
+    interactionId: safeUuid(),
+    sessionId: safeUuid(),
+    platform: state.currentContext?.platform || "other",
+    preset: state.activePreset,
+    draftRaw: state.lastDraft,
+    draftFinal: branch.message,
+    chosenOptionId: branch.optionId,
+    optionRejectedIds: [1, 2, 3].filter((candidate) => candidate !== branch.optionId),
+    recipientContextHash: hashContext(state.currentContext),
+    outcome,
+    observedSignals
+  };
+}
+
+function renderUi() {
+  const shouldRender = Boolean(state.currentContext?.composeDetected || state.hudOpen);
+  if (!shouldRender) {
+    teardownRoot();
+    return;
+  }
+
+  if (!ensureRoot()) {
+    return;
+  }
+
+  state.shellRoot.innerHTML = `${buildLauncherMarkup()}${state.hudOpen ? buildHudMarkup() : ""}`;
+}
+
+function ensureRoot() {
+  if (state.shadowHost && state.shellRoot) {
+    return true;
+  }
+
+  const mount = document.body || document.documentElement;
+  if (!mount) {
+    return false;
+  }
+
+  state.shadowHost = document.createElement("div");
+  state.shadowHost.setAttribute(ROOT_ATTR, "true");
+  state.shadowHost.style.cssText = "all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;";
+  const shadow = state.shadowHost.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = `
+    :host, * { box-sizing: border-box; }
+    [data-p1-shell="true"] { position: fixed; inset: 0; pointer-events: none; font: 400 13px/1.45 ui-sans-serif, system-ui, sans-serif; color: #171411; }
+    [data-p1-launcher="true"] { position: fixed; pointer-events: auto; display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 12px; border: 1px solid rgba(22, 18, 13, 0.15); background: rgba(255, 251, 244, 0.96); color: #171411; box-shadow: 0 12px 30px rgba(22, 18, 13, 0.12); cursor: pointer; border-radius: 10px; }
+    [data-p1-launcher="true"] strong { font-size: 12px; }
+    [data-p1-launcher="true"] span { font-size: 11px; color: #6a6054; }
+    [data-p1-badge="true"] { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 22px; padding: 0 7px; border-radius: 6px; border: 1px solid rgba(22, 18, 13, 0.12); background: #171411; color: #fffaf3; font-weight: 700; letter-spacing: 0.01em; }
+    [data-p1-badge-tone="good"] { background: #163a2d; color: #effff8; }
+    [data-p1-badge-tone="risky"] { background: #6a241a; color: #fff6f2; }
+    [data-p1-badge-tone="neutral"] { background: #5d4a20; color: #fff8e8; }
+    [data-p1-hud="true"] { position: fixed; pointer-events: auto; width: min(520px, calc(100vw - 24px)); border: 1px solid rgba(22, 18, 13, 0.16); background: rgba(255, 250, 242, 0.98); box-shadow: 0 24px 80px rgba(22, 18, 13, 0.18); border-radius: 14px; overflow: hidden; }
+    [data-p1-header="true"] { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px 12px; border-bottom: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.65); }
+    [data-p1-title="true"] { margin: 0; font-size: 16px; font-weight: 700; }
+    [data-p1-muted="true"] { margin: 0; color: #6a6054; font-size: 11px; }
+    [data-p1-body="true"] { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px; max-height: min(72vh, 720px); overflow: auto; }
+    [data-p1-card="true"] { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.72); border-radius: 12px; }
+    [data-p1-card="true"][data-tone="error"] { border-color: rgba(140, 43, 27, 0.26); background: #fff2ef; color: #7e1e10; }
+    [data-p1-card="true"][data-tone="status"] { background: #fffdf8; }
+    [data-p1-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    [data-p1-context-grid="true"] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    [data-p1-mini="true"] { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.85); border: 1px solid rgba(22, 18, 13, 0.06); }
+    [data-p1-mini="true"] label { font-size: 10px; color: #6a6054; letter-spacing: 0.06em; text-transform: uppercase; }
+    [data-p1-mini="true"] strong { font-size: 12px; }
+    [data-p1-preset-row="true"] { display: flex; flex-wrap: wrap; gap: 6px; }
+    [data-p1-chip="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: #fffef9; color: #171411; border-radius: 999px; padding: 6px 10px; font: 600 11px/1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+    [data-p1-chip="true"][data-selected="true"] { background: #171411; color: #fffaf3; border-color: #171411; }
+    [data-p1-branches="true"] { display: flex; flex-direction: column; gap: 8px; }
+    [data-p1-branch-card="true"] { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid rgba(22, 18, 13, 0.08); background: #fffef9; cursor: pointer; }
+    [data-p1-branch-card="true"][data-selected="true"] { border-color: rgba(22, 18, 13, 0.3); box-shadow: inset 0 0 0 1px rgba(22, 18, 13, 0.08); }
+    [data-p1-branch-card="true"][data-recommended="true"] { background: #f7f0e5; }
+    [data-p1-annotation-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    [data-p1-move-label="true"] { font-size: 13px; font-weight: 700; }
+    [data-p1-message="true"] { margin: 0; white-space: pre-wrap; font-size: 14px; line-height: 1.42; }
+    [data-p1-small="true"] { margin: 0; color: #5f5549; font-size: 11px; }
+    [data-p1-actions="true"] { display: flex; gap: 8px; flex-wrap: wrap; }
+    [data-p1-button="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: #fffef9; color: #171411; border-radius: 10px; padding: 8px 10px; font: 600 11px/1.1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+    [data-p1-button="true"][data-tone="primary"] { background: #171411; color: #fffaf3; border-color: #171411; }
+    [data-p1-help="true"] { font-size: 11px; color: #6a6054; }
+    [data-p1-section-title="true"] { margin: 0; font-size: 11px; color: #6a6054; letter-spacing: 0.08em; text-transform: uppercase; }
+    [data-p1-outcome-row="true"] { display: flex; gap: 8px; flex-wrap: wrap; }
+  `;
+  state.shellRoot = document.createElement("div");
+  state.shellRoot.setAttribute("data-p1-shell", "true");
+  state.shellRoot.addEventListener("click", onShellClick);
+  shadow.append(style, state.shellRoot);
+  mount.appendChild(state.shadowHost);
+  return true;
+}
+
+function teardownRoot() {
+  state.shadowHost?.remove();
+  state.shadowHost = null;
+  state.shellRoot = null;
+}
+
+async function onShellClick(event) {
+  const actionNode = event.target?.closest?.("[data-p1-action]");
+  if (!actionNode) {
+    return;
+  }
+
+  const action = actionNode.getAttribute("data-p1-action");
+  if (action === "open-analyze") {
+    await openHud({
+      analyzeImmediately: true,
+      allowWithoutCompose: false,
+      toggleIfOpen: false
+    });
+    return;
+  }
+
+  if (action === "close-hud") {
+    closeHud();
+    return;
+  }
+
+  if (action === "analyze-now") {
+    await analyzeCurrentDraft();
+    return;
+  }
+
+  if (action === "cold-start") {
+    await chooseColdStart(actionNode.getAttribute("data-cold-start"));
+    return;
+  }
+
+  if (action === "preset") {
+    state.activePreset = actionNode.getAttribute("data-preset") || state.activePreset;
+    renderUi();
+    return;
+  }
+
+  if (action === "use-branch") {
+    await useBranch(Number(actionNode.getAttribute("data-option")));
+    return;
+  }
+
+  if (action === "copy-branch") {
+    await copyBranch(Number(actionNode.getAttribute("data-option")));
+    return;
+  }
+
+  if (action === "record-outcome") {
+    await recordOutcome(actionNode.getAttribute("data-outcome"));
+  }
+}
+
+function buildLauncherMarkup() {
+  if (!state.currentContext?.composeDetected || !state.currentComposeTarget) {
+    return "";
+  }
+
+  const rect = clampRect(state.currentComposeTarget.getBoundingClientRect());
+  const heuristic = evaluateDraftHeuristically(state.lastDraft, state.currentContext);
+  const top = clampNumber(rect.top - 40, 12, window.innerHeight - 46);
+  const left = clampNumber(rect.right - 210, 12, Math.max(12, window.innerWidth - 226));
+
+  return `
+    <button
+      type="button"
+      data-p1-launcher="true"
+      data-p1-action="open-analyze"
+      style="top:${top}px;left:${left}px;"
+      aria-label="Analyze current draft with persona1"
+    >
+      <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(heuristic.annotation)}">${escapeHtml(heuristic.annotation)}</span>
+      <strong>${escapeHtml(heuristic.label)}</strong>
+      <span>ctrl/cmd+shift+space</span>
+    </button>
+  `;
+}
+
+function buildHudMarkup() {
+  const layout = computeHudLayout();
+  const context = state.currentContext;
+  const draftAssessment = state.analysis?.draftAssessment || evaluateDraftHeuristically(state.lastDraft, context);
+  const mirrorInsight = state.extensionState?.mirrorInsights?.[0] || null;
+  const branchesMarkup = state.analysis?.branches?.length
+    ? `
+        <div data-p1-branches="true">
+          ${state.analysis.branches.map((branch) => buildBranchCard(branch)).join("")}
+        </div>
+      `
+    : `
+        <div data-p1-card="true">
+          <strong>${escapeHtml(state.isAnalyzing ? "building move tree..." : "trigger analysis to see the next three likely branches.")}</strong>
+          <p data-p1-help="true">shortcut: ctrl/cmd+shift+space. then 1, 2, or 3 to apply a move.</p>
+        </div>
+      `;
+
+  return `
+    <section data-p1-hud="true" style="top:${layout.top}px;left:${layout.left}px;">
+      <header data-p1-header="true">
+        <div>
+          <p data-p1-muted="true">persona1</p>
+          <h2 data-p1-title="true">see the board before you send</h2>
+          <p data-p1-muted="true">${escapeHtml(context ? describeContextLine(context) : "focus a compose box to analyze in place.")}</p>
+        </div>
+        <div data-p1-actions="true">
+          <button type="button" data-p1-button="true" data-p1-action="close-hud">close</button>
+        </div>
+      </header>
+      <div data-p1-body="true">
+        ${state.error ? `<div data-p1-card="true" data-tone="error"><strong>${escapeHtml(state.error)}</strong></div>` : ""}
+        ${state.status ? `<div data-p1-card="true" data-tone="status"><strong>${escapeHtml(state.status)}</strong></div>` : ""}
+        ${!state.extensionState?.onboardingDone ? buildOnboardingMarkup() : ""}
+        ${state.extensionState?.onboardingDone ? `
+          <div data-p1-card="true">
+            <div data-p1-row="true">
+              <div data-p1-row="true">
+                <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(draftAssessment.annotation)}">${escapeHtml(draftAssessment.annotation)}</span>
+                <div>
+                  <strong>${escapeHtml(draftAssessment.label)}</strong>
+                  <p data-p1-small="true">${escapeHtml(draftAssessment.reason)}</p>
+                </div>
+              </div>
+              <button type="button" data-p1-button="true" data-tone="primary" data-p1-action="analyze-now">analyze</button>
+            </div>
+            <div data-p1-preset-row="true">
+              ${PRESETS.map((preset) => `
+                <button
+                  type="button"
+                  data-p1-chip="true"
+                  data-p1-action="preset"
+                  data-preset="${preset}"
+                  data-selected="${preset === state.activePreset ? "true" : "false"}"
+                >${escapeHtml(preset)}</button>
+              `).join("")}
+            </div>
+            ${context ? `
+              <div data-p1-context-grid="true">
+                <div data-p1-mini="true"><label>recipient</label><strong>${escapeHtml(context.recipientName || context.recipientHandle || "unknown")}</strong></div>
+                <div data-p1-mini="true"><label>confidence</label><strong>${escapeHtml(context.contextConfidence)}</strong></div>
+                <div data-p1-mini="true"><label>wants</label><strong>${escapeHtml(context.inferredWants)}</strong></div>
+                <div data-p1-mini="true"><label>risk</label><strong>${escapeHtml(context.inferredConcerns)}</strong></div>
+              </div>
+            ` : ""}
+          </div>
+          ${mirrorInsight ? `
+            <div data-p1-card="true">
+              <p data-p1-section-title="true">mirror</p>
+              <strong>${escapeHtml(mirrorInsight.observation)}</strong>
+              <p data-p1-small="true">${escapeHtml(mirrorInsight.supportingPattern)} | evidence ${escapeHtml(mirrorInsight.evidenceCount)}</p>
+            </div>
+          ` : ""}
+          ${branchesMarkup}
+          ${buildOutcomeMarkup()}
+        ` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function buildOnboardingMarkup() {
+  return `
+    <div data-p1-card="true">
+      <p data-p1-section-title="true">cold start</p>
+      <strong>pick the first prior once.</strong>
+      <p data-p1-small="true">no form. no setup. this only sets the initial read on your drafts.</p>
+      <div data-p1-actions="true">
+        <button type="button" data-p1-button="true" data-p1-action="cold-start" data-cold-start="dating">dating</button>
+        <button type="button" data-p1-button="true" data-p1-action="cold-start" data-cold-start="professional">professional</button>
+        <button type="button" data-p1-button="true" data-p1-action="cold-start" data-cold-start="general">general</button>
+      </div>
+    </div>
+  `;
+}
+
+function buildBranchCard(branch) {
+  const selected = branch.optionId === state.selectedOptionId;
+  return `
+    <article
+      data-p1-branch-card="true"
+      data-option="${branch.optionId}"
+      data-selected="${selected ? "true" : "false"}"
+      data-recommended="${branch.isRecommended ? "true" : "false"}"
+      data-p1-action="use-branch"
+    >
+      <div data-p1-annotation-row="true">
+        <div data-p1-row="true">
+          <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(branch.annotation)}">${escapeHtml(branch.annotation)}</span>
+          <div>
+            <p data-p1-move-label="true">${escapeHtml(branch.moveLabel)}</p>
+            <p data-p1-small="true">${branch.isRecommended ? "recommended move" : `option ${escapeHtml(branch.optionId)}`}</p>
+          </div>
+        </div>
+        <p data-p1-small="true">alignment ${escapeHtml(branch.goalAlignmentScore)}</p>
+      </div>
+      <p data-p1-message="true">${escapeHtml(branch.message)}</p>
+      <p data-p1-small="true">their likely move: ${escapeHtml(branch.predictedResponse)}</p>
+      <p data-p1-small="true">opponent move type: ${escapeHtml(branch.opponentMoveType)}</p>
+      <p data-p1-small="true">branch path: ${escapeHtml(branch.branchPath)}</p>
+      <p data-p1-small="true">payoff: ${escapeHtml(branch.strategicPayoff)}</p>
+      <p data-p1-small="true">why: ${escapeHtml(branch.whyItWorks)}${branch.risk ? ` | risk: ${escapeHtml(branch.risk)}` : ""}</p>
+      <div data-p1-actions="true">
+        <button type="button" data-p1-button="true" data-tone="primary" data-p1-action="use-branch" data-option="${branch.optionId}">use ${branch.optionId}</button>
+        <button type="button" data-p1-button="true" data-p1-action="copy-branch" data-option="${branch.optionId}">copy</button>
+      </div>
+    </article>
+  `;
+}
+
+function buildOutcomeMarkup() {
+  if (!state.lastAppliedBranch) {
+    return "";
+  }
+
+  return `
+    <div data-p1-card="true">
+      <p data-p1-section-title="true">how did it land?</p>
+      <p data-p1-small="true">this updates the local persona profile and mirror without asking you to fill out anything.</p>
+      <div data-p1-outcome-row="true">
+        <button type="button" data-p1-button="true" data-p1-action="record-outcome" data-outcome="positive">landed</button>
+        <button type="button" data-p1-button="true" data-p1-action="record-outcome" data-outcome="neutral">neutral</button>
+        <button type="button" data-p1-button="true" data-p1-action="record-outcome" data-outcome="negative">missed</button>
+      </div>
+    </div>
+  `;
+}
+
+function computeHudLayout() {
+  const composeRect = state.currentComposeTarget ? clampRect(state.currentComposeTarget.getBoundingClientRect()) : null;
+  const width = Math.min(520, window.innerWidth - 24);
+
+  if (!composeRect) {
+    return {
+      top: clampNumber(window.innerHeight / 2 - 180, 12, Math.max(12, window.innerHeight - 380)),
+      left: clampNumber(window.innerWidth / 2 - width / 2, 12, Math.max(12, window.innerWidth - width - 12))
+    };
+  }
+
+  const spaceBelow = window.innerHeight - composeRect.bottom;
+  const top =
+    spaceBelow > 380
+      ? clampNumber(composeRect.bottom + 10, 12, Math.max(12, window.innerHeight - 420))
+      : clampNumber(composeRect.top - 390, 12, Math.max(12, window.innerHeight - 420));
+  const left = clampNumber(composeRect.right - width, 12, Math.max(12, window.innerWidth - width - 12));
+
+  return { top, left };
+}
 
 function sanitizeContext(detected) {
   return {
@@ -125,612 +830,360 @@ function sanitizeContext(detected) {
   };
 }
 
-function syncChip() {
-  if (!currentContext?.composeDetected) {
-    chip?.remove();
-    chip = null;
-    if (!panel) {
-      shadowHost?.remove();
-      shadowHost = null;
-      shellRoot = null;
-    }
-    return;
-  }
-
-  if (!ensureRoot()) {
-    return;
-  }
-
-  if (!chip) {
-    chip = document.createElement("button");
-    chip.type = "button";
-    chip.textContent = "persona1";
-    chip.setAttribute("aria-label", "Open persona1 workspace");
-    chip.style.cssText = "all:initial;position:fixed;right:24px;bottom:24px;z-index:2147483647;pointer-events:auto;border:1px solid rgba(15,23,42,.14);background:#f8f4ec;color:#1d1a16;padding:10px 14px;border-radius:999px;box-shadow:0 18px 50px rgba(15,23,42,.14);cursor:pointer;font:600 12px/1.2 ui-sans-serif,system-ui,sans-serif;";
-    chip.addEventListener("click", () => void togglePanel());
-    shellRoot.appendChild(chip);
-  }
-
-  chip.textContent = currentContext.platform === "gmail" ? "persona1 gmail" : `persona1 ${currentContext.platform}`;
+function describeContextLine(context) {
+  const pieces = [
+    context.platform,
+    context.recipientName || context.recipientHandle || null,
+    context.recipientLastMessage ? `last move: ${context.recipientLastMessage}` : null
+  ].filter(Boolean);
+  return pieces.join(" | ");
 }
 
-async function togglePanel(forceOpen = false) {
-  if (panel) {
-    closePanel();
-    return;
-  }
-  await openPanel(forceOpen);
+function recommendedOptionId(branches) {
+  return branches.find((branch) => branch.isRecommended)?.optionId || 1;
 }
 
-async function openPanel(forceOpen = false) {
-  if (panel || !ensureRoot()) {
-    return;
-  }
-
-  if (!currentContext?.composeDetected && !forceOpen) {
-    return;
-  }
-
-  panel = document.createElement("section");
-  panel.style.cssText = "all:initial;position:fixed;top:16px;right:16px;width:420px;height:min(88vh,920px);z-index:2147483647;pointer-events:auto;border-radius:24px;overflow:hidden;border:1px solid rgba(15,23,42,.14);box-shadow:0 28px 80px rgba(15,23,42,.22);background:#f4f1ea;color:#1d1a16;font:400 14px/1.5 ui-sans-serif,system-ui,sans-serif;";
-  panel.innerHTML = getPanelMarkup();
-  shellRoot.appendChild(panel);
-  panelState.manualFallback = !currentContext?.composeDetected;
-  bindPanelEvents();
-  await bootPanel();
-}
-
-function closePanel() {
-  panel?.remove();
-  panel = null;
-  panelState = { extensionState: null, analysis: null, selectedBranch: null, lastDraft: "", manualFallback: false };
-  if (!currentContext?.composeDetected) {
-    shadowHost?.remove();
-    shadowHost = null;
-    shellRoot = null;
-  }
-}
-
-async function bootPanel() {
-  const response = await chrome.runtime.sendMessage({ type: MSG.getExtensionState });
-  panelState.extensionState = response?.state || null;
-  setUsageBadge();
-  renderMirror(panelState.extensionState?.mirrorInsights || []);
-  if (!panelState.extensionState?.onboardingDone) {
-    show("onboarding", true);
-    renderStatus("Choose a starting context to unlock the first persona profile.");
-  } else {
-    renderStatus(currentContext?.composeDetected ? "Context ready. Review the draft, choose a preset, and analyze." : "No live compose box found. Manual fallback is ready.");
-  }
-  renderComposeSection();
-}
-
-function bindPanelEvents() {
-  panel.querySelector('[data-action="close"]').addEventListener("click", closePanel);
-  panel.querySelector('[data-action="refresh"]').addEventListener("click", () => {
-    refreshContext();
-    renderStatus(currentContext?.composeDetected ? "Context refreshed." : "No active compose box found.");
-  });
-  panel.querySelector('[data-action="analyze"]').addEventListener("click", () => void analyzeCurrentContext());
-  panel.querySelector('[data-action="checkout"]').addEventListener("click", () => void startCheckout());
-  panel.querySelectorAll("[data-cold-start]").forEach((node) => {
-    node.addEventListener("click", () => void chooseColdStart(node.getAttribute("data-cold-start")));
-  });
-  panel.querySelectorAll("[data-outcome]").forEach((node) => {
-    node.addEventListener("click", () => void recordOutcome(node.getAttribute("data-outcome")));
-  });
-}
-
-function renderComposeSection() {
-  if (!panel) {
-    return;
-  }
-
-  const canCompose = Boolean(panelState.extensionState?.onboardingDone && (currentContext?.composeDetected || panelState.manualFallback));
-  show("compose", canCompose);
-  if (!canCompose) {
-    return;
-  }
-
-  const activeContext = currentContext || createManualFallbackContext();
-  panel.querySelector('[data-role="context"]').innerHTML = contextHtml(activeContext);
-  const draftNode = panel.querySelector('[data-field="draft"]');
-  if (!draftNode.matches(":focus")) {
-    draftNode.value = currentContext?.draft || draftNode.value || "";
-  }
-}
-
-async function chooseColdStart(coldStartContext) {
-  const response = await chrome.runtime.sendMessage({ type: MSG.setColdStartContext, coldStartContext });
-  if (!response?.ok) {
-    renderError(response?.error || "Could not save the starting context.");
-    return;
-  }
-
-  panelState.extensionState = {
-    ...(panelState.extensionState || {}),
-    onboardingDone: true,
-    coldStartContext,
-    userId: response.userId,
-    persona: response.persona,
-    usageCount: panelState.extensionState?.usageCount || 0,
-    plan: panelState.extensionState?.plan || "free",
-    mirrorInsights: panelState.extensionState?.mirrorInsights || []
-  };
-  show("onboarding", false);
-  setUsageBadge();
-  renderComposeSection();
-  renderStatus("Starting context saved. Context is ready for analysis.");
-}
-
-async function analyzeCurrentContext() {
-  if (!panel) {
-    renderError("Workspace is not open.");
-    return;
-  }
-
-  const activeContext = currentContext || createManualFallbackContext();
-  const draft = String(panel.querySelector('[data-field="draft"]').value || currentContext?.draft || "").trim();
-  if (!draft) {
-    renderError("A draft is required before analysis.");
-    return;
-  }
-
-  renderStatus("Analyzing the conversation tree.");
-  const response = await chrome.runtime.sendMessage({
-    type: MSG.analyzeConversation,
-    payload: {
-      draft,
-      preset: getPreset(),
-      context: toRecipientContext(activeContext)
-    }
-  });
-
-  if (!response?.ok) {
-    if (response?.requiresOnboarding) {
-      show("onboarding", true);
-    }
-    if (response?.requiresCheckout) {
-      show("paywall", true);
-    }
-    renderError(response?.error || "Analysis failed.");
-    return;
-  }
-
-  panelState.analysis = response.analysis;
-  panelState.lastDraft = draft;
-  panelState.selectedBranch = null;
-  if (panelState.extensionState) {
-    panelState.extensionState.usageCount = response.usageCount;
-  }
-  setUsageBadge();
-  show("branches", true);
-  show("outcome", false);
-  show("paywall", false);
-  renderBranches(response.analysis?.branches || []);
-  renderStatus(response.analysis?.draftWarning || "Analysis ready. Pick the line that matches your objective.");
-}
-
-function renderBranches(branches) {
-  if (!panel) {
-    return;
-  }
-
-  const list = panel.querySelector('[data-role="branch-list"]');
-  list.innerHTML = "";
-  for (const branch of branches) {
-    const card = document.createElement("article");
-    card.setAttribute("data-branch-card", "true");
-    if (branch.isRecommended) {
-      card.setAttribute("data-recommended", "true");
-    }
-    card.innerHTML = `
-      <div data-role="meta">
-        <span data-pill="true">option ${escapeHtml(branch.optionId)}</span>
-        ${branch.isRecommended ? '<span data-pill="true" data-recommended-pill="true">recommended</span>' : ""}
-        <span data-pill="true">alignment ${escapeHtml(branch.goalAlignmentScore)}</span>
-      </div>
-      <p data-role="message">${escapeHtml(branch.message)}</p>
-      <p data-muted="true">Predicted response: ${escapeHtml(branch.predictedResponse)}</p>
-      <p data-muted="true">Branch path: ${escapeHtml(branch.branchPath)}</p>
-      <p data-muted="true">Why it works: ${escapeHtml(branch.whyItWorks)}</p>
-      ${branch.risk ? `<p data-muted="true">Risk: ${escapeHtml(branch.risk)}</p>` : ""}
-      <div data-role="actions">
-        <button type="button" data-use="${branch.optionId}">Use this</button>
-        <button type="button" data-copy="${branch.optionId}">Copy</button>
-      </div>
-    `;
-    card.querySelector(`[data-use="${branch.optionId}"]`).addEventListener("click", () => void useBranch(branch.optionId));
-    card.querySelector(`[data-copy="${branch.optionId}"]`).addEventListener("click", () => void copyBranch(branch.optionId));
-    list.appendChild(card);
-  }
-}
-
-async function useBranch(optionId) {
-  const branch = panelState.analysis?.branches?.find((item) => item.optionId === optionId);
-  if (!branch) {
-    renderError("Could not find the selected branch.");
-    return;
-  }
-
-  if (currentComposeTarget) {
-    if (!insertComposeValue(currentComposeTarget, branch.message)) {
-      renderError("Could not insert the selected branch.");
-      return;
-    }
-  } else {
-    await copyText(branch.message);
-    const draftNode = panel?.querySelector('[data-field="draft"]');
-    if (draftNode) {
-      draftNode.value = branch.message;
-    }
-  }
-
-  panelState.selectedBranch = branch;
-  show("outcome", true);
-  await chrome.runtime.sendMessage({
-    type: MSG.recordOptionSelection,
-    payload: interactionPayload(branch, "unknown", [])
-  });
-  renderStatus(currentComposeTarget ? `Inserted option ${optionId}. Once you see how it lands, record the outcome.` : `Copied option ${optionId} and loaded it into the manual draft field.`);
-}
-
-async function copyBranch(optionId) {
-  const branch = panelState.analysis?.branches?.find((item) => item.optionId === optionId);
-  if (!branch) {
-    return;
-  }
-  await copyText(branch.message);
-  panelState.selectedBranch = branch;
-  renderStatus(`Copied option ${optionId}.`);
-}
-
-async function recordOutcome(outcome) {
-  if (!panelState.selectedBranch) {
-    renderError("Pick or copy a branch before recording the outcome.");
-    return;
-  }
-
-  const response = await chrome.runtime.sendMessage({
-    type: MSG.recordOutcome,
-    payload: interactionPayload(
-      panelState.selectedBranch,
-      outcome,
-      panelState.selectedBranch.isRecommended ? ["trusted_recommended_branch"] : []
-    )
-  });
-
-  if (!response?.ok) {
-    renderError(response?.error || "Could not record the outcome.");
-    return;
-  }
-
-  if (panelState.extensionState) {
-    panelState.extensionState.persona = response.persona;
-    panelState.extensionState.mirrorInsights = response.mirrorInsights;
-  }
-  renderMirror(response.mirrorInsights || []);
-  renderStatus("Outcome captured. Mirror insights updated.");
-}
-
-async function startCheckout() {
-  if (!panel) {
-    return;
-  }
-  const email = String(panel.querySelector('[data-field="checkout-email"]').value || "").trim();
-  const response = await chrome.runtime.sendMessage({ type: MSG.startCheckout, payload: { email } });
-  if (!response?.ok) {
-    renderError(response?.error || response?.checkout?.reason || "Could not start checkout.");
-    return;
-  }
-  renderStatus("Checkout opened in a new tab.");
-}
-
-async function handleWorkspaceCommand(command) {
-  if (command === CMD.collapse) {
-    closePanel();
-    return;
-  }
-  if (!panel) {
-    await openPanel(true);
-  }
-  if (command === CMD.analyze) {
-    await analyzeCurrentContext();
-  }
-  if (command === CMD.select1) {
-    await useBranch(1);
-  }
-  if (command === CMD.select2) {
-    await useBranch(2);
-  }
-  if (command === CMD.select3) {
-    await useBranch(3);
-  }
-  if (command === CMD.copy && panelState.selectedBranch) {
-    await copyText(panelState.selectedBranch.message);
-    renderStatus("Copied the selected branch.");
-  }
-}
-
-function interactionPayload(branch, outcome, observedSignals) {
+function toRecipientContext(context) {
   return {
-    interactionId: safeUuid(),
-    sessionId: safeUuid(),
-    platform: currentContext?.platform || "other",
-    preset: getPreset(),
-    draftRaw: panelState.lastDraft || currentContext?.draft || "",
-    draftFinal: branch.message,
-    chosenOptionId: branch.optionId,
-    optionRejectedIds: [1, 2, 3].filter((id) => id !== branch.optionId),
-    recipientContextHash: hashContext(currentContext),
-    outcome,
-    observedSignals
+    recipientName: context.recipientName || null,
+    recipientHandle: context.recipientHandle || null,
+    communicationStyle: context.communicationStyle || "casual",
+    emotionalStateSignals: context.emotionalStateSignals || [],
+    relationshipType: context.relationshipType || "acquaintance",
+    platform: context.platform || "other",
+    threadSummary: context.threadSummary || "",
+    recipientLastMessage: context.recipientLastMessage || null,
+    inferredWants: context.inferredWants || "clarity",
+    inferredConcerns: context.inferredConcerns || "confusion",
+    contextConfidence: context.contextConfidence || 50
   };
 }
 
-function renderMirror(insights) {
-  if (!panel) {
-    return;
+function evaluateDraftHeuristically(draft, context) {
+  const text = String(draft || "").trim();
+  if (!text) {
+    return {
+      annotation: "??",
+      label: "no move yet",
+      reason: "there is no draft to evaluate."
+    };
   }
-  const list = panel.querySelector('[data-role="mirror-list"]');
-  if (!insights?.length) {
-    show("mirror", false);
-    list.innerHTML = "";
-    return;
+
+  let score = 0;
+  const lower = text.toLowerCase();
+
+  if (text.length >= 14) score += 1;
+  if (text.length >= 36 && text.length <= 220) score += 1;
+  if (/[?]/.test(text)) score += 0.5;
+  if (/\b(can|would|open to|free to|worth)\b/i.test(text)) score += 0.5;
+  if (/\b(just checking in|hope you're well|circling back|following up|wanted to follow up)\b/i.test(lower)) score -= 2.5;
+  if (/\bmaybe|kind of|sort of|just wanted|was wondering\b/i.test(lower)) score -= 1.2;
+  if (text.length > 280) score -= 1.4;
+  if (/(!!|\?\?|\.\.\.)/.test(text)) score -= 0.6;
+  if (context?.platform === "linkedin" && /\b(meeting|call|demo)\b/i.test(lower)) score += 0.4;
+  if (/\bbecause|so that|which means\b/i.test(lower)) score += 0.3;
+  if (/\bplease let me know\b/i.test(lower)) score -= 0.8;
+
+  if (score >= 2.5) {
+    return { annotation: "!", label: "playable move", reason: "the draft is concrete enough to create a predictable reply." };
   }
-  show("mirror", true);
-  list.innerHTML = insights
-    .map(
-      (insight) => `
-        <article data-mirror-item="true">
-          <p>${escapeHtml(insight.observation)}</p>
-          <p data-muted="true">Evidence count: ${escapeHtml(insight.evidenceCount)} | confidence ${Math.round(Number(insight.confidence || 0) * 100)}</p>
-        </article>
-      `
-    )
-    .join("");
+  if (score >= 1.6) {
+    return { annotation: "!?", label: "interesting move", reason: "there is some leverage here, but the line can still drift." };
+  }
+  if (score >= 0.4) {
+    return { annotation: "?!", label: "soft edge", reason: "the draft may work, but it gives away too much control." };
+  }
+  if (score >= -0.8) {
+    return { annotation: "?", label: "weak move", reason: "the draft is easy to brush off or misread." };
+  }
+  return { annotation: "??", label: "blunder risk", reason: "the draft is generic enough to collapse the thread." };
 }
 
-function setUsageBadge() {
-  if (!panel || !panelState.extensionState) {
+function toneForAnnotation(annotation) {
+  if (annotation === "!!" || annotation === "!") {
+    return "good";
+  }
+  if (annotation === "!?" || annotation === "?!") {
+    return "neutral";
+  }
+  return "risky";
+}
+
+function installObserver() {
+  if (state.observer || !document.documentElement) {
     return;
   }
-  panel.querySelector('[data-role="usage"]').textContent = `${panelState.extensionState.plan} - ${panelState.extensionState.usageCount}/3`;
+
+  state.observer = new MutationObserver(() => refreshContext());
+  state.observer.observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["aria-label", "role", "contenteditable", "data-testid"]
+  });
 }
 
-function renderStatus(message) {
-  if (!panel) {
-    return;
+function detectComposeContext(doc) {
+  return (
+    extractLinkedInContext(doc) ||
+    extractGmailContext(doc) ||
+    extractTwitterDmContext(doc) ||
+    extractSlackContext(doc) ||
+    extractDatingAppContext(doc) ||
+    extractFallbackContext(doc)
+  );
+}
+
+function extractLinkedInContext(doc) {
+  const onLinkedIn = /(^|\.)linkedin\.com$/i.test(window.location.hostname);
+  const composeNode =
+    doc.querySelector(".msg-form__contenteditable[contenteditable='true']") ||
+    doc.querySelector("[contenteditable='true'][role='textbox']") ||
+    doc.querySelector("textarea[name='message']");
+  if (!onLinkedIn || !composeNode) {
+    return null;
   }
-  const node = panel.querySelector('[data-card="status"]');
-  node.removeAttribute("data-error");
-  panel.querySelector('[data-role="status"]').textContent = message;
-}
 
-function renderError(message) {
-  if (!panel) {
-    return;
-  }
-  const node = panel.querySelector('[data-card="status"]');
-  node.setAttribute("data-error", "true");
-  panel.querySelector('[data-role="status"]').textContent = message;
-}
+  const thread =
+    composeNode.closest("[data-test-conversation-pane-wrapper], .msg-thread, .msg-overlay-conversation-bubble") ||
+    doc.body;
 
-function show(name, visible) {
-  if (!panel) {
-    return;
-  }
-  const node = panel.querySelector(`[data-card="${name}"]`);
-  if (!node) {
-    return;
-  }
-  if (visible) {
-    node.removeAttribute("hidden");
-  } else {
-    node.setAttribute("hidden", "true");
-  }
-}
-
-function getPanelMarkup() {
-  return `
-    <style>
-      [data-root="true"]{display:flex;flex-direction:column;height:100%;background:#f4f1ea;color:#1d1a16;font:400 14px/1.5 ui-sans-serif,system-ui,sans-serif}
-      [data-header="true"]{display:flex;justify-content:space-between;gap:16px;padding:18px 18px 14px;background:rgba(255,255,255,.92);border-bottom:1px solid rgba(15,23,42,.08)}
-      [data-eyebrow="true"]{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#70665b}
-      [data-title="true"]{margin:0;font-size:19px;line-height:1.2;font-weight:700}
-      [data-body="true"]{display:flex;flex-direction:column;gap:12px;padding:16px;overflow:auto}
-      [data-card]{display:flex;flex-direction:column;gap:10px;padding:14px;background:rgba(255,255,255,.85);border:1px solid rgba(15,23,42,.08);border-radius:18px}
-      [data-card="status"][data-error="true"]{border-color:rgba(178,47,35,.24);background:#fff3f0;color:#7f1d1d}
-      [data-head="true"],[data-role="actions"],[data-role="meta"]{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}
-      [data-field="wrap"]{display:flex;flex-direction:column;gap:6px}
-      [data-field="wrap"]>span{font-size:12px;font-weight:600;color:#4b4238}
-      input,textarea,select{box-sizing:border-box;width:100%;border:1px solid rgba(15,23,42,.12);border-radius:14px;padding:10px 12px;background:#fffdf8;color:#1d1a16;font:inherit}
-      textarea{resize:vertical}
-      [data-grid="true"]{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-      button{box-sizing:border-box;border:1px solid rgba(15,23,42,.12);border-radius:14px;padding:10px 12px;background:#fffdf8;color:#1d1a16;font:600 13px/1.2 ui-sans-serif,system-ui,sans-serif;cursor:pointer}
-      button:hover{background:#fff7ea}
-      [data-action="analyze"],[data-action="checkout"],[data-use]{background:#1d1a16;color:#fffdf8;border-color:#1d1a16}
-      [data-pill="true"],[data-role="usage"]{display:inline-flex;align-items:center;border:1px solid rgba(15,23,42,.12);border-radius:999px;padding:4px 8px;background:#fffdf8;font-size:11px;font-weight:600;color:#4b4238}
-      [data-recommended-pill="true"]{background:#1d1a16;color:#fffdf8;border-color:#1d1a16}
-      [data-muted="true"]{margin:0;color:#70665b;font-size:12px}
-      [data-role="context"],[data-role="message"]{white-space:pre-wrap}
-      [data-branch-card="true"],[data-mirror-item="true"]{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid rgba(15,23,42,.08);border-radius:16px;background:#fffdf8}
-      [data-branch-card="true"][data-recommended="true"]{border-color:rgba(29,26,22,.24);box-shadow:inset 0 0 0 1px rgba(29,26,22,.06)}
-      h3,p{margin:0}
-    </style>
-    <div data-root="true">
-      <div data-header="true">
-        <div><p data-eyebrow="true">persona1</p><h2 data-title="true">See the board before you send.</h2></div>
-        <div data-head="true"><span data-role="usage">free</span><button type="button" data-action="close">close</button></div>
-      </div>
-      <div data-body="true">
-        <section data-card="status"><p data-role="status">Loading workspace.</p></section>
-        <section data-card="onboarding" hidden><h3>Choose your starting context</h3><p data-muted="true">This sets the first prior. You can change it later.</p><div data-grid="true"><button type="button" data-cold-start="dating">dating</button><button type="button" data-cold-start="professional">professional</button><button type="button" data-cold-start="general">general</button></div></section>
-        <section data-card="compose" hidden><div data-head="true"><h3>Current compose context</h3><button type="button" data-action="refresh">refresh</button></div><div data-role="context"></div><label data-field="wrap"><span>Preset</span><select data-field="preset">${PRESETS.map((preset) => `<option value="${preset}"${preset === "pitch" ? " selected" : ""}>${preset}</option>`).join("")}</select></label><label data-field="wrap"><span>Draft</span><textarea data-field="draft" rows="6" placeholder="Type here, or let persona1 read the current compose box."></textarea></label><button type="button" data-action="analyze">Analyze conversation</button></section>
-        <section data-card="branches" hidden><div data-head="true"><h3>Three branches</h3><p data-muted="true">One recommended line. Two alternatives worth considering.</p></div><div data-role="branch-list"></div></section>
-        <section data-card="outcome" hidden><h3>How did it land?</h3><p data-muted="true">This updates the local persona profile and mirror insights.</p><div data-grid="true"><button type="button" data-outcome="positive">landed</button><button type="button" data-outcome="neutral">neutral</button><button type="button" data-outcome="negative">missed</button></div></section>
-        <section data-card="mirror" hidden><h3>Mirror</h3><div data-role="mirror-list"></div></section>
-        <section data-card="paywall" hidden><h3>Free uses are done</h3><p data-muted="true">Launch pricing is $9/month. Checkout opens in a new tab.</p><label data-field="wrap"><span>Email</span><input data-field="checkout-email" type="email" placeholder="you@example.com" /></label><button type="button" data-action="checkout">Unlock monthly</button></section>
-      </div>
-    </div>
-  `;
-}
-
-function contextHtml(snapshot) {
-  return [snapshot.platform, snapshot.recipientName ? `Recipient: ${snapshot.recipientName}` : "", `Confidence: ${snapshot.contextConfidence}`, snapshot.threadSummary || "No thread summary available."].filter(Boolean).map(escapeHtml).join("<br />");
-}
-
-function toRecipientContext(snapshot) {
   return {
-    recipientName: snapshot.recipientName || null,
-    recipientHandle: snapshot.recipientHandle || null,
-    communicationStyle: snapshot.communicationStyle || "casual",
-    emotionalStateSignals: snapshot.emotionalStateSignals || [],
-    relationshipType: snapshot.relationshipType || "acquaintance",
-    platform: snapshot.platform || "other",
-    threadSummary: snapshot.threadSummary || "",
-    recipientLastMessage: snapshot.recipientLastMessage || null,
-    inferredWants: snapshot.inferredWants || "clarity",
-    inferredConcerns: snapshot.inferredConcerns || "confusion",
-    contextConfidence: snapshot.contextConfidence || 50
+    platform: "linkedin",
+    composeNode,
+    draft: normalizeComposeValue(composeNode),
+    recipientName:
+      doc.querySelector(".msg-thread__link-to-profile .t-16, .msg-thread-header__participant-names, .msg-s-message-group__name")
+        ?.textContent?.trim() || null,
+    recipientHandle: null,
+    relationshipType: "colleague",
+    communicationStyle: "professional",
+    emotionalStateSignals: [],
+    inferredWants: "a concise, competent, low-friction response",
+    inferredConcerns: "time cost and vague asks",
+    threadSummary: summarizeThreadText(thread.innerText || ""),
+    recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null,
+    contextConfidence: 80
   };
 }
 
-function ensureRoot() {
-  if (shadowHost && shellRoot) {
-    return true;
+function extractGmailContext(doc) {
+  const onGmail = /(^|\.)mail\.google\.com$/i.test(window.location.hostname);
+  const composeNode =
+    doc.querySelector('div[aria-label="Message Body"][contenteditable="true"]') ||
+    doc.querySelector('div[role="textbox"][g_editable="true"]') ||
+    doc.querySelector('div[contenteditable="true"][aria-label*="Message Body"]') ||
+    doc.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"]');
+  if (!onGmail || !composeNode) {
+    return null;
   }
-  const mount = document.body || document.documentElement;
-  if (!mount) {
-    return false;
-  }
-  shadowHost = document.createElement("div");
-  shadowHost.setAttribute("data-persona1-root", "true");
-  shadowHost.style.cssText = "all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;";
-  const shadow = shadowHost.attachShadow({ mode: "open" });
-  shellRoot = document.createElement("div");
-  shellRoot.style.cssText = "position:fixed;inset:0;pointer-events:none;";
-  shadow.appendChild(shellRoot);
-  mount.appendChild(shadowHost);
-  return true;
+
+  const thread = composeNode.closest(".nH, .aDh, .aoP") || doc.body;
+  const recipientName =
+    doc.querySelector("input[peoplekit-id]")?.value?.trim() ||
+    doc.querySelector("span[email]")?.getAttribute("email")?.trim() ||
+    doc.querySelector("div[data-hovercard-id]")?.getAttribute("data-hovercard-id")?.trim() ||
+    null;
+
+  return {
+    platform: "gmail",
+    composeNode,
+    draft: normalizeComposeValue(composeNode),
+    recipientName,
+    recipientHandle: recipientName,
+    relationshipType: "colleague",
+    communicationStyle: "professional",
+    emotionalStateSignals: [],
+    inferredWants: "clarity and competence",
+    inferredConcerns: "friction, ambiguity, and time cost",
+    threadSummary: summarizeThreadText(thread.innerText || ""),
+    recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null,
+    contextConfidence: 84
+  };
 }
 
-function createManualFallbackContext() {
+function extractTwitterDmContext(doc) {
+  const onX = /(^|\.)x\.com$/i.test(window.location.hostname) || /(^|\.)twitter\.com$/i.test(window.location.hostname);
+  const composeNode =
+    doc.querySelector('[data-testid="dmComposerTextInput"][contenteditable="true"]') ||
+    doc.querySelector('[data-testid="dmComposerTextInput"]');
+  if (!onX || !composeNode) {
+    return null;
+  }
+
+  const thread = composeNode.closest('[data-testid="DMDrawer"]') || doc.body;
+  const recipientName = doc.querySelector('[data-testid="DMConversationTitle"] span')?.textContent?.trim() || null;
+
+  return {
+    platform: "twitter",
+    composeNode,
+    draft: normalizeComposeValue(composeNode),
+    recipientName,
+    recipientHandle: recipientName ? `@${recipientName.replace(/\s+/g, "").toLowerCase()}` : null,
+    relationshipType: "acquaintance",
+    communicationStyle: "casual",
+    emotionalStateSignals: [],
+    inferredWants: "clarity and tone control",
+    inferredConcerns: "awkwardness or pressure",
+    threadSummary: summarizeThreadText(thread.innerText || ""),
+    recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null,
+    contextConfidence: 72
+  };
+}
+
+function extractSlackContext(doc) {
+  const onSlack = /(^|\.)app\.slack\.com$/i.test(window.location.hostname);
+  const composeNode =
+    doc.querySelector('[data-qa="message_input"] [contenteditable="true"]') ||
+    doc.querySelector('[data-qa="message_input"]');
+  if (!onSlack || !composeNode) {
+    return null;
+  }
+
+  const recipientName =
+    doc.querySelector('[data-qa="channel_header_title"], [data-qa="channel_name"]')?.textContent?.trim() || null;
+
+  return {
+    platform: "slack",
+    composeNode,
+    draft: normalizeComposeValue(composeNode),
+    recipientName,
+    recipientHandle: recipientName,
+    relationshipType: "colleague",
+    communicationStyle: "casual",
+    emotionalStateSignals: [],
+    inferredWants: "clear, low-friction coordination",
+    inferredConcerns: "noise and ambiguity",
+    threadSummary: summarizeThreadText(doc.body?.innerText || ""),
+    recipientLastMessage: null,
+    contextConfidence: 70
+  };
+}
+
+function extractDatingAppContext(doc) {
+  const onDatingApp = /(bumble|hinge|tinder|feeld)/i.test(window.location.hostname);
+  const composeNode =
+    doc.querySelector("textarea") ||
+    doc.querySelector('[contenteditable="true"][role="textbox"]');
+  if (!onDatingApp || !composeNode) {
+    return null;
+  }
+
+  return {
+    platform: "dating_app",
+    composeNode,
+    draft: normalizeComposeValue(composeNode),
+    recipientName:
+      doc.querySelector("header h1, header h2, [data-testid='profile-name']")?.textContent?.trim() || null,
+    recipientHandle: null,
+    relationshipType: "romantic",
+    communicationStyle: "warm",
+    emotionalStateSignals: [],
+    inferredWants: "ease, confidence, and spark without pressure",
+    inferredConcerns: "awkwardness, over-investment, and generic lines",
+    threadSummary: summarizeThreadText(doc.body?.innerText || ""),
+    recipientLastMessage: null,
+    contextConfidence: 58
+  };
+}
+
+function extractFallbackContext(doc) {
+  const active = doc.activeElement;
+  const composeNode =
+    active && (active.tagName === "TEXTAREA" || active.isContentEditable)
+      ? active
+      : doc.querySelector("textarea, [contenteditable='true'], div[role='textbox']");
+  if (!composeNode) {
+    return null;
+  }
+
   return {
     platform: "other",
-    composeDetected: false,
-    draft: "",
+    composeNode,
+    draft: normalizeComposeValue(composeNode),
     recipientName: null,
     recipientHandle: null,
     relationshipType: "acquaintance",
     communicationStyle: "casual",
     emotionalStateSignals: [],
     inferredWants: "clarity",
-    inferredConcerns: "confusion",
-    threadSummary: summarizeThreadText(document.title + " " + (document.body?.innerText || "")),
+    inferredConcerns: "awkwardness and confusion",
+    threadSummary: summarizeThreadText(doc.body?.innerText || ""),
     recipientLastMessage: null,
-    contextConfidence: 30
+    contextConfidence: 45
   };
 }
 
-function installObserver() {
-  if (observer || !document.documentElement) {
-    return;
-  }
-  observer = new MutationObserver(() => refreshContext());
-  observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "role", "contenteditable", "data-testid"] });
-}
-
-function detectComposeContext(doc) {
-  return extractLinkedInContext(doc) || extractGmailContext(doc) || extractTwitterDmContext(doc) || extractSlackContext(doc) || extractDatingAppContext(doc) || extractFallbackContext(doc);
-}
-
-function extractLinkedInContext(doc) {
-  const onLinkedIn = /(^|\.)linkedin\.com$/i.test(window.location.hostname);
-  const composeNode = doc.querySelector(".msg-form__contenteditable[contenteditable='true']") || doc.querySelector("[contenteditable='true'][role='textbox']") || doc.querySelector("textarea[name='message']");
-  if (!onLinkedIn || !composeNode) {
-    return null;
-  }
-  const thread = composeNode.closest("[data-test-conversation-pane-wrapper], .msg-thread, .msg-overlay-conversation-bubble") || doc.body;
-  return { platform: "linkedin", composeNode, draft: normalizeComposeValue(composeNode), recipientName: doc.querySelector(".msg-thread__link-to-profile .t-16, .msg-thread-header__participant-names, .msg-s-message-group__name")?.textContent?.trim() || null, recipientHandle: null, relationshipType: "colleague", communicationStyle: "professional", emotionalStateSignals: [], inferredWants: "a concise, competent, low-friction response", inferredConcerns: "time cost and vague asks", threadSummary: summarizeThreadText(thread.innerText || ""), recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null, contextConfidence: 80 };
-}
-
-function extractGmailContext(doc) {
-  const onGmail = /(^|\.)mail\.google\.com$/i.test(window.location.hostname);
-  const composeNode = doc.querySelector('div[aria-label="Message Body"][contenteditable="true"]') || doc.querySelector('div[role="textbox"][g_editable="true"]') || doc.querySelector('div[contenteditable="true"][aria-label*="Message Body"]') || doc.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"]');
-  if (!onGmail || !composeNode) {
-    return null;
-  }
-  const thread = composeNode.closest(".nH, .aDh, .aoP") || doc.body;
-  const recipientName = doc.querySelector("input[peoplekit-id]")?.value?.trim() || doc.querySelector("span[email]")?.getAttribute("email")?.trim() || doc.querySelector("div[data-hovercard-id]")?.getAttribute("data-hovercard-id")?.trim() || null;
-  return { platform: "gmail", composeNode, draft: normalizeComposeValue(composeNode), recipientName, recipientHandle: recipientName, relationshipType: "colleague", communicationStyle: "professional", emotionalStateSignals: [], inferredWants: "clarity and competence", inferredConcerns: "friction, ambiguity, and time cost", threadSummary: summarizeThreadText(thread.innerText || ""), recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null, contextConfidence: 84 };
-}
-
-function extractTwitterDmContext(doc) {
-  const onX = /(^|\.)x\.com$/i.test(window.location.hostname) || /(^|\.)twitter\.com$/i.test(window.location.hostname);
-  const composeNode = doc.querySelector('[data-testid="dmComposerTextInput"][contenteditable="true"]') || doc.querySelector('[data-testid="dmComposerTextInput"]');
-  if (!onX || !composeNode) {
-    return null;
-  }
-  const thread = composeNode.closest('[data-testid="DMDrawer"]') || doc.body;
-  const recipientName = doc.querySelector('[data-testid="DMConversationTitle"] span')?.textContent?.trim() || null;
-  return { platform: "twitter", composeNode, draft: normalizeComposeValue(composeNode), recipientName, recipientHandle: recipientName ? `@${recipientName.replace(/\s+/g, "").toLowerCase()}` : null, relationshipType: "acquaintance", communicationStyle: "casual", emotionalStateSignals: [], inferredWants: "clarity and tone control", inferredConcerns: "awkwardness or pressure", threadSummary: summarizeThreadText(thread.innerText || ""), recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null, contextConfidence: 72 };
-}
-
-function extractSlackContext(doc) {
-  const onSlack = /(^|\.)app\.slack\.com$/i.test(window.location.hostname);
-  const composeNode = doc.querySelector('[data-qa="message_input"] [contenteditable="true"]') || doc.querySelector('[data-qa="message_input"]');
-  if (!onSlack || !composeNode) {
-    return null;
-  }
-  const recipientName = doc.querySelector('[data-qa="channel_header_title"], [data-qa="channel_name"]')?.textContent?.trim() || null;
-  return { platform: "slack", composeNode, draft: normalizeComposeValue(composeNode), recipientName, recipientHandle: recipientName, relationshipType: "colleague", communicationStyle: "casual", emotionalStateSignals: [], inferredWants: "clear, low-friction coordination", inferredConcerns: "noise and ambiguity", threadSummary: summarizeThreadText(doc.body?.innerText || ""), recipientLastMessage: null, contextConfidence: 70 };
-}
-
-function extractDatingAppContext(doc) {
-  const onDatingApp = /(bumble|hinge|tinder|feeld)/i.test(window.location.hostname);
-  const composeNode = doc.querySelector("textarea") || doc.querySelector('[contenteditable="true"][role="textbox"]');
-  if (!onDatingApp || !composeNode) {
-    return null;
-  }
-  return { platform: "dating_app", composeNode, draft: normalizeComposeValue(composeNode), recipientName: doc.querySelector("header h1, header h2, [data-testid='profile-name']")?.textContent?.trim() || null, recipientHandle: null, relationshipType: "romantic", communicationStyle: "warm", emotionalStateSignals: [], inferredWants: "ease, confidence, and spark without pressure", inferredConcerns: "awkwardness, over-investment, and generic lines", threadSummary: summarizeThreadText(doc.body?.innerText || ""), recipientLastMessage: null, contextConfidence: 58 };
-}
-
-function extractFallbackContext(doc) {
-  const active = doc.activeElement;
-  const composeNode = active && (active.tagName === "TEXTAREA" || active.isContentEditable) ? active : doc.querySelector("textarea, [contenteditable='true'], div[role='textbox']");
-  if (!composeNode) {
-    return null;
-  }
-  return { platform: "other", composeNode, draft: normalizeComposeValue(composeNode), recipientName: null, recipientHandle: null, relationshipType: "acquaintance", communicationStyle: "casual", emotionalStateSignals: [], inferredWants: "clarity", inferredConcerns: "awkwardness and confusion", threadSummary: summarizeThreadText(doc.body?.innerText || ""), recipientLastMessage: null, contextConfidence: 45 };
+function isComposeNode(node) {
+  return Boolean(
+    node &&
+      typeof node === "object" &&
+      ("tagName" in node || "isContentEditable" in node) &&
+      ((node.tagName === "TEXTAREA") ||
+        (node.tagName === "INPUT" && node.type === "text") ||
+        node.isContentEditable)
+  );
 }
 
 function normalizeComposeValue(target) {
-  if (!target) return "";
-  if (typeof target.value === "string") return target.value;
-  if (typeof target.innerText === "string") return target.innerText.trim();
+  if (!target) {
+    return "";
+  }
+
+  if (typeof target.value === "string") {
+    return target.value;
+  }
+
+  if (typeof target.innerText === "string") {
+    return target.innerText.trim();
+  }
+
   return "";
 }
 
 function insertComposeValue(target, value) {
-  if (!target) return false;
+  if (!target) {
+    return false;
+  }
+
   const next = String(value || "");
   target.focus();
+
   if (typeof target.value === "string") {
     target.value = next;
     target.dispatchEvent(new Event("input", { bubbles: true }));
     target.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }
+
   if (target.isContentEditable) {
-    target.innerHTML = "";
-    next.split("\n").forEach((line, index) => {
-      if (index > 0) target.appendChild(document.createElement("br"));
-      target.appendChild(document.createTextNode(line));
-    });
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    let inserted = false;
+    try {
+      inserted = document.execCommand("insertText", false, next);
+    } catch {
+      inserted = false;
+    }
+
+    if (!inserted) {
+      target.innerHTML = "";
+      next.split("\n").forEach((line, index) => {
+        if (index > 0) {
+          target.appendChild(document.createElement("br"));
+        }
+        target.appendChild(document.createTextNode(line));
+      });
+    }
+
     target.dispatchEvent(new Event("input", { bubbles: true }));
     return true;
   }
+
   return false;
 }
 
@@ -749,29 +1202,50 @@ async function copyText(text) {
   }
 }
 
+function clampRect(rect) {
+  return {
+    top: Number.isFinite(rect.top) ? rect.top : 24,
+    right: Number.isFinite(rect.right) ? rect.right : 24,
+    bottom: Number.isFinite(rect.bottom) ? rect.bottom : 24,
+    left: Number.isFinite(rect.left) ? rect.left : 24
+  };
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
 function summarizeThreadText(value) {
   return String(value).replace(/\s+/g, " ").trim().slice(0, 280);
 }
 
 function findLastLine(value) {
-  return String(value).split("\n").map((line) => line.trim()).filter(Boolean).slice(-1)[0] || "";
+  return String(value)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-1)[0] || "";
 }
 
 function hashContext(snapshot) {
   const raw = JSON.stringify(snapshot || {});
   let hash = 0;
-  for (let i = 0; i < raw.length; i += 1) hash = (hash * 31 + raw.charCodeAt(i)) >>> 0;
+  for (let index = 0; index < raw.length; index += 1) {
+    hash = (hash * 31 + raw.charCodeAt(index)) >>> 0;
+  }
   return `ctx_${hash.toString(16)}`;
 }
 
 function safeUuid() {
-  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `id_${Math.random().toString(16).slice(2)}_${Date.now()}`;
-}
-
-function getPreset() {
-  return String(panel?.querySelector('[data-field="preset"]')?.value || "pitch");
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `id_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
 function escapeHtml(value) {
-  return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }

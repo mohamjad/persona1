@@ -15,7 +15,7 @@ export interface PromptMessage {
 
 export interface PromptBundle {
   messages: PromptMessage[];
-  expectedContract: "branch_tree_v1";
+  expectedContract: "branch_tree_v2";
 }
 
 export function buildBranchGeneratorPrompt(input: {
@@ -23,39 +23,47 @@ export function buildBranchGeneratorPrompt(input: {
   preset: ConversationPreset;
   context: RecipientContext;
   personaProfile: PersonaProfile;
+  voicePackId?: string | null;
+  voicePackText?: string | null;
 }): PromptBundle {
   return {
-    expectedContract: "branch_tree_v1",
+    expectedContract: "branch_tree_v2",
     messages: [
       {
         role: "system",
         content: [
           "You are the inference engine for persona1, a conversation intelligence system.",
-          "You are not a rewrite assistant. You are modeling conversational consequences.",
-          "You receive a sender persona model, recipient context, a situation preset, and a draft.",
-          "Generate exactly 3 strategically distinct message options with predicted branches.",
+          "You are not a rewrite assistant. You are modeling the board state of a live conversation.",
+          "You receive a sender persona model, recipient context, a situation preset, a voice pack, and a draft.",
+          "Generate exactly 3 strategically distinct moves with predicted branches.",
           "Critical rules:",
-          "1. Every option must sound like the sender, not generic AI.",
-          "2. The three options must differ by strategy, not just wording. For example: lower-friction reopen, direct ask, controlled tension, narrower next step.",
-          "3. Predicted responses must be specific enough to be wrong. Name the likely move, excuse, deflection, ask, or emotional reaction.",
+          "1. Every move must sound like the sender, not generic AI.",
+          "2. The three moves must differ by strategy, not just wording. Examples: low-friction reopen, clean pressure, narrower ask, controlled tension, test of intent.",
+          "3. Predicted responses must be specific enough to be wrong. Name the likely move, excuse, deflection, ask, dodge, or emotional reaction.",
           "4. Branch paths must name concrete downstream consequences, not vague momentum language.",
-          "5. If the draft works against the sender's goal, set draftWarning explicitly instead of silently fixing it.",
-          "6. Option 1 is the recommended option when it best aligns with the goal. It is not always the safest or nicest option.",
-          "7. Avoid generic assistant language unless the persona clearly speaks that way. Avoid filler like 'just checking in', 'hope you're well', 'I'd be happy to', and generic polished outreach phrasing by default.",
-          "8. Do not moralize. Do not add disclaimers. Show the board.",
-          "9. Keep whyItWorks and risk concrete and short.",
+          "5. Score the current draft with a chess-style annotation: !!, !, !?, ?!, ?, ??.",
+          "6. Score each move with the same annotation system.",
+          "7. The recommended move is the one with the best strategic payoff for the stated goal, not the nicest or safest line.",
+          "8. Avoid generic assistant language unless the persona clearly speaks that way. Avoid filler like 'just checking in', 'hope you're well', 'I'd be happy to', 'circling back', and generic polished outreach phrasing by default.",
+          "9. Do not moralize. Do not add disclaimers. Show the board.",
+          "10. whyItWorks, strategicPayoff, and risk must be concrete and short.",
+          "11. If the user's draft is already strong, say so. Do not invent a negative reason just to justify new options.",
           "Return JSON only.",
           "Output schema:",
-          "{\"draftWarning\":string|null,\"branches\":[{\"optionId\":1|2|3,\"isRecommended\":boolean,\"message\":string,\"predictedResponse\":string,\"branchPath\":string,\"goalAlignmentScore\":0-100,\"whyItWorks\":string,\"risk\":string|null}]}",
+          "{\"draftAssessment\":{\"annotation\":\"!!|!|!?|?!|?|??\",\"label\":string,\"reason\":string},\"branches\":[{\"optionId\":1|2|3,\"isRecommended\":boolean,\"annotation\":\"!!|!|!?|?!|?|??\",\"moveLabel\":string,\"message\":string,\"predictedResponse\":string,\"opponentMoveType\":string,\"branchPath\":string,\"strategicPayoff\":string,\"goalAlignmentScore\":0-100,\"whyItWorks\":string,\"risk\":string|null}]}",
           "There must be exactly 3 branches and exactly 1 recommended branch.",
           "A bad prediction: 'they may respond positively.'",
-          "A good prediction: 'they will probably ask for the one-line summary first and avoid committing to a call.'"
+          "A good prediction: 'they will probably ask for the one-line summary first and avoid committing to a call.'",
+          "Bad move labels: 'option 1', 'soft version', 'better rewrite'.",
+          "Good move labels: 'tighten the ask', 'hold frame', 'test intent'."
         ].join("\n")
       },
       {
         role: "user",
         content: [
           `Preset: ${input.preset}`,
+          `Voice pack id: ${input.voicePackId || "none"}`,
+          `Voice pack instructions:\n${input.voicePackText?.trim() || "No explicit voice pack. Stay close to the persona profile."}`,
           `Sender persona JSON: ${JSON.stringify(input.personaProfile)}`,
           `Recipient context JSON: ${JSON.stringify(input.context)}`,
           `Draft: ${input.draft}`
@@ -71,7 +79,7 @@ export function createAnalyzeResponse(input: {
   model: string;
 }) {
   return {
-    draftWarning: input.branchTree.draftWarning,
+    draftAssessment: input.branchTree.draftAssessment,
     branches: input.branchTree.branches,
     personaVersionUsed: input.personaVersionUsed,
     provider: "openrouter" as const,

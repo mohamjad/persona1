@@ -16,6 +16,8 @@ test("api server exposes health and registration routes", async () => {
       businessId: "persona1",
       inferenceProvider: "openrouter",
       model: "openai/gpt-4.1-mini",
+      voicePackId: null,
+      voicePackText: null,
       apiBaseUrl: "http://127.0.0.1",
       storageMode: "filesystem",
       authMode: "local_hmac",

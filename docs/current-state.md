@@ -8,7 +8,7 @@ Current repo status:
 - source-of-truth planning docs created
 - full repo scaffold implemented
 - API implemented
-- Chrome extension implemented with an injected in-page workspace as the active MVP surface
+- Chrome extension implemented with an inline compose HUD as the active MVP surface
 - local-first persona engine implemented
 - billing and usage gate implemented
 - repository adapters implemented
@@ -48,7 +48,9 @@ Extension capabilities now implemented:
 - Slack extraction
 - dating-app extraction
 - fallback extraction
-- injected workspace chess tree rendering
+- inline chess tree rendering anchored to the active compose box
+- keyboard-first analysis with `Ctrl/Cmd+Shift+Space`
+- chess-style draft annotations and branch annotations
 - option insertion into the active compose box
 - full preset catalog in the live UI
 - local usage gate after three uses
@@ -58,7 +60,7 @@ Extension capabilities now implemented:
 - local mirror surfacing
 - local communication scorecard
 - provider-backed persona update and mirror response handling for authenticated flows
-- browser smoke harness for workspace open, onboarding, analysis, and branch insertion
+- browser smoke harness for LinkedIn-style, Gmail-style, and fallback compose analysis and branch insertion
 
 ## What Exists Today
 
@@ -90,4 +92,4 @@ The repo is functional without these resources, but live behavior depends on the
 
 ## Build Rule
 
-Any further implementation should preserve the existing contract shapes and extend them without hiding behavior behind new abstraction layers.
+Any further implementation should preserve the existing move-tree contract shapes and extend them without hiding behavior behind new abstraction layers.

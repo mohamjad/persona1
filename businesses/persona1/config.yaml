@@ -3,6 +3,7 @@ business:
   name: persona1
   inference_provider: openrouter
   default_model: openai/gpt-4.1
+  default_voice_pack: world1-founder
   product_mode: chrome_extension
   api_base_url: http://127.0.0.1:8787
 

@@ -15,6 +15,8 @@ export interface Persona1RuntimeConfig {
   businessId: string;
   inferenceProvider: "openrouter";
   model: string;
+  voicePackId: string | null;
+  voicePackText: string | null;
   apiBaseUrl: string;
   storageMode: "filesystem" | "postgres";
   authMode: "local_hmac" | "firebase_jwt";
@@ -29,6 +31,7 @@ interface RawBusinessConfig {
     slug?: string;
     inference_provider?: string;
     default_model?: string;
+    default_voice_pack?: string;
     api_base_url?: string;
   };
   pricing?: {
@@ -44,6 +47,10 @@ interface RawBusinessConfig {
 export async function loadRuntimeConfig(): Promise<Persona1RuntimeConfig> {
   const configPath = path.resolve("C:/Users/moham/persona1/businesses/persona1/config.yaml");
   const rawConfig = YAML.parse(await fs.readFile(configPath, "utf8")) as RawBusinessConfig;
+  const voicePackId = rawConfig.business?.default_voice_pack?.trim() || null;
+  const voicePackText = voicePackId
+    ? await fs.readFile(path.resolve(`C:/Users/moham/persona1/businesses/persona1/personas/${voicePackId}.md`), "utf8")
+    : null;
   const databaseUrl = process.env.AI_OS_DATABASE_URL?.trim() || process.env.PERSONA1_DATABASE_URL?.trim() || null;
   const repository = databaseUrl
     ? new PostgresPersona1Repository(databaseUrl)
@@ -65,6 +72,8 @@ export async function loadRuntimeConfig(): Promise<Persona1RuntimeConfig> {
     businessId: rawConfig.business?.slug ?? "persona1",
     inferenceProvider: "openrouter",
     model: process.env.OPENROUTER_MODEL?.trim() || rawConfig.business?.default_model || "openai/gpt-4.1-mini",
+    voicePackId,
+    voicePackText,
     apiBaseUrl: process.env.PERSONA1_APP_BASE_URL?.trim() || rawConfig.business?.api_base_url || "http://127.0.0.1:8787",
     storageMode: databaseUrl ? "postgres" : "filesystem",
     authMode: authTokens.mode,

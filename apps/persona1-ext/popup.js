@@ -33,9 +33,11 @@ document.querySelectorAll("[data-cold-start]").forEach((button) => {
 openSidePanelButton.addEventListener("click", async () => {
   const response = await chrome.runtime.sendMessage({
     type: MESSAGE_TYPES.sidebarCommand,
-    command: COMMAND_TYPES.toggleSidebar
+    command: COMMAND_TYPES.analyze
   });
-  statusNode.textContent = response?.ok ? "Opened the workspace." : response?.error || "Could not open the workspace.";
+  statusNode.textContent = response?.ok
+    ? "Analyzing the active draft."
+    : response?.error || "Could not analyze the active draft.";
 });
 
 saveSettingsButton.addEventListener("click", async () => {

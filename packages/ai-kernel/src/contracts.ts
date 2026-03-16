@@ -31,19 +31,31 @@ export const RecipientContextSchema = z.object({
   contextConfidence: z.number().int().min(0).max(100)
 });
 
+export const MoveAnnotationSchema = z.enum(["!!", "!", "!?", "?!", "?", "??"]);
+
+export const DraftAssessmentSchema = z.object({
+  annotation: MoveAnnotationSchema,
+  label: z.string().min(1),
+  reason: z.string().min(1)
+});
+
 export const BranchOptionSchema = z.object({
   optionId: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   isRecommended: z.boolean(),
+  annotation: MoveAnnotationSchema,
+  moveLabel: z.string().min(1),
   message: z.string().min(1),
   predictedResponse: z.string().min(1),
+  opponentMoveType: z.string().min(1),
   branchPath: z.string().min(1),
+  strategicPayoff: z.string().min(1),
   goalAlignmentScore: z.number().int().min(0).max(100),
   whyItWorks: z.string().min(1),
   risk: z.string().nullable()
 });
 
 export const BranchTreeSchema = z.object({
-  draftWarning: z.string().nullable(),
+  draftAssessment: DraftAssessmentSchema,
   branches: z
     .array(BranchOptionSchema)
     .length(3)
@@ -77,7 +89,7 @@ export const AnalyzeRequestSchema = z.object({
 });
 
 export const AnalyzeResponseSchema = z.object({
-  draftWarning: z.string().nullable(),
+  draftAssessment: DraftAssessmentSchema,
   branches: BranchTreeSchema.shape.branches,
   personaVersionUsed: z.number().int().positive(),
   provider: z.literal("openrouter"),
@@ -110,6 +122,8 @@ export const MirrorCheckResponseSchema = z.object({
 
 export type ConversationPreset = z.infer<typeof ConversationPresetSchema>;
 export type RecipientContext = z.infer<typeof RecipientContextSchema>;
+export type MoveAnnotation = z.infer<typeof MoveAnnotationSchema>;
+export type DraftAssessment = z.infer<typeof DraftAssessmentSchema>;
 export type BranchOption = z.infer<typeof BranchOptionSchema>;
 export type BranchTree = z.infer<typeof BranchTreeSchema>;
 export type AnalyzeRequest = z.infer<typeof AnalyzeRequestSchema>;

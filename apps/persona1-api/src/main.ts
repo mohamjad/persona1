@@ -8,7 +8,9 @@ const analyzer = openRouterApiKey
   ? createOpenRouterConversationAnalyzer({
       apiKey: openRouterApiKey,
       model: config.model,
-      appName: "persona1"
+      appName: "persona1",
+      voicePackId: config.voicePackId,
+      voicePackText: config.voicePackText
     })
   : null;
 

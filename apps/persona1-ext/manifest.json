@@ -18,7 +18,7 @@
       "suggested_key": {
         "default": "Ctrl+Shift+Y"
       },
-      "description": "Toggle the persona1 sidebar"
+      "description": "Toggle the persona1 inline HUD"
     },
     "analyze": {
       "suggested_key": {
@@ -36,7 +36,7 @@
       "suggested_key": {
         "default": "Ctrl+Shift+X"
       },
-      "description": "Collapse the sidebar"
+      "description": "Collapse the active HUD"
     }
   },
   "content_scripts": [

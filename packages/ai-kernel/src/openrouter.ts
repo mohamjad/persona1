@@ -38,6 +38,8 @@ export interface OpenRouterConversationAnalyzerOptions {
   fetchImpl?: FetchLike;
   baseUrl?: string;
   appName?: string;
+  voicePackId?: string | null;
+  voicePackText?: string | null;
 }
 
 interface OpenRouterChatResponse {
@@ -67,7 +69,9 @@ export function createOpenRouterConversationAnalyzer(
         draft: input.draft,
         preset: input.preset,
         context: input.context,
-        personaProfile
+        personaProfile,
+        ...(options.voicePackId !== undefined ? { voicePackId: options.voicePackId } : {}),
+        ...(options.voicePackText !== undefined ? { voicePackText: options.voicePackText } : {})
       });
 
       const response = await fetchImpl(baseUrl, {
