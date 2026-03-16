@@ -1,0 +1,237 @@
+:root {
+  color-scheme: light;
+  --bg: #f4f1ea;
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-strong: #fffdf8;
+  --text: #201914;
+  --muted: #6b625b;
+  --border: rgba(72, 51, 33, 0.14);
+  --accent: #1d4ed8;
+  --accent-soft: rgba(29, 78, 216, 0.12);
+  --shadow: 0 16px 40px rgba(36, 24, 16, 0.1);
+  --radius: 20px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(250, 204, 21, 0.18), transparent 30%),
+    radial-gradient(circle at top right, rgba(14, 165, 233, 0.14), transparent 25%),
+    var(--bg);
+  color: var(--text);
+  font: 400 14px/1.5 Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+}
+
+.shell {
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.hero h1,
+.card h2 {
+  margin: 0;
+  font: 600 22px/1.1 Georgia, "Iowan Old Style", serif;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font: 600 11px/1.2 ui-sans-serif, system-ui, sans-serif;
+  color: var(--muted);
+}
+
+.usage-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+.hidden {
+  display: none;
+}
+
+.status-card {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+}
+
+.status-error {
+  border-color: rgba(185, 28, 28, 0.25);
+  background: rgba(254, 242, 242, 0.85);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 6px 0 0;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.field span {
+  font: 600 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+textarea,
+input,
+select,
+button {
+  font: inherit;
+}
+
+textarea,
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-strong);
+  color: var(--text);
+  padding: 12px 14px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 140px;
+}
+
+.primary-button,
+.choice,
+.ghost-button,
+.branch-button {
+  cursor: pointer;
+  border-radius: 14px;
+  border: 1px solid transparent;
+}
+
+.primary-button {
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--text);
+  color: #fff;
+}
+
+.ghost-button {
+  padding: 8px 10px;
+  background: transparent;
+  border-color: var(--border);
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.choice {
+  padding: 12px;
+  background: var(--surface-strong);
+  border-color: var(--border);
+}
+
+.context-summary {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px dashed var(--border);
+}
+
+.branch-list,
+.mirror-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.branch-card {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.branch-card.recommended {
+  background: linear-gradient(180deg, rgba(29, 78, 216, 0.12), rgba(255, 255, 255, 0.72));
+  border-color: rgba(29, 78, 216, 0.35);
+}
+
+.branch-meta,
+.branch-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 8px;
+  font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.branch-button {
+  padding: 10px 12px;
+  background: var(--surface-strong);
+  border-color: var(--border);
+}
+
+.branch-button.primary {
+  background: var(--text);
+  color: #fff;
+}
+
+.mirror-item {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.55);
+}

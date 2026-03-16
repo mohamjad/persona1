@@ -1,0 +1,61 @@
+business:
+  slug: persona1
+  name: persona1
+  inference_provider: openrouter
+  default_model: openai/gpt-4.1-mini
+  product_mode: chrome_extension
+  api_base_url: http://127.0.0.1:8787
+
+runtime:
+  storage_mode_preference: postgres
+  local_storage_fallback: filesystem
+  auth_mode: local_hmac
+  firebase_target: true
+
+extension:
+  supported_platforms:
+    - linkedin
+    - gmail
+    - twitter_dm
+    - slack
+    - dating_app
+    - fallback
+  sidebar_default: side_panel
+  free_tier_local_first: true
+
+presets:
+  - id: date
+    objective: Create attraction, maintain tension, escalate without pressure.
+  - id: pitch
+    objective: Hook in sentence one, build credibility fast, close with a low-friction ask.
+  - id: negotiate
+    objective: Anchor high, find mutual benefit frame, preserve relationship after the ask.
+  - id: apologize
+    objective: Repair trust without sounding defensive or theatrical.
+  - id: reconnect
+    objective: Reopen the thread without sounding random or needy.
+  - id: confront
+    objective: Name the tension clearly without turning the conversation into a performance.
+  - id: close
+    objective: Move the conversation to a decisive next step.
+  - id: decline
+    objective: Say no cleanly without inviting unnecessary negotiation.
+
+pricing:
+  free_uses: 3
+  launch_plan:
+    id: monthly
+    price_usd: 9
+    api_cost_cap_usd: 6
+    stripe_price_id: null
+
+usage:
+  local_gate_authoritative_for_free_tier: true
+  server_gate_authoritative_for_paid_tier: true
+
+feature_flags:
+  local_persona_storage: true
+  paid_persona_sync: true
+  mirror_feature: true
+  outcome_capture: true
+  stripe_checkout: true

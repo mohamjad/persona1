@@ -1,0 +1,70 @@
+{
+  "manifest_version": 3,
+  "name": "persona1",
+  "version": "0.1.0",
+  "description": "Conversation intelligence that shows the board before you send.",
+  "permissions": ["storage", "activeTab", "scripting", "tabs", "sidePanel"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "persona1",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "commands": {
+    "toggle_sidebar": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y"
+      },
+      "description": "Toggle the persona1 sidebar"
+    },
+    "analyze": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+A"
+      },
+      "description": "Analyze the current compose box"
+    },
+    "select_option_1": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+1"
+      },
+      "description": "Select option 1"
+    },
+    "select_option_2": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+2"
+      },
+      "description": "Select option 2"
+    },
+    "select_option_3": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+3"
+      },
+      "description": "Select option 3"
+    },
+    "copy_selected": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+C"
+      },
+      "description": "Copy the selected option"
+    },
+    "collapse_sidebar": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+X"
+      },
+      "description": "Collapse the sidebar"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

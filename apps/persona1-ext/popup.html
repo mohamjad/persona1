@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>persona1</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header>
+        <p class="eyebrow">persona1</p>
+        <h1>Conversation intelligence</h1>
+      </header>
+
+      <section class="card">
+        <p id="popup-status" class="muted">Loading extension state.</p>
+      </section>
+
+      <section class="card">
+        <h2>Cold start</h2>
+        <div class="choice-grid">
+          <button data-cold-start="dating">dating</button>
+          <button data-cold-start="professional">professional</button>
+          <button data-cold-start="general">general</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Local API</h2>
+        <label class="field">
+          <span>API base URL</span>
+          <input id="api-base-url" type="text" placeholder="http://127.0.0.1:8787" />
+        </label>
+        <button id="save-settings">Save settings</button>
+      </section>
+
+      <section class="card">
+        <h2>Scorecard</h2>
+        <p id="scorecard-headline" class="muted">Not enough interaction data yet.</p>
+        <div id="scorecard-metrics" class="score-grid"></div>
+        <button id="copy-scorecard">Copy scorecard</button>
+      </section>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+  </html>

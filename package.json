@@ -1,0 +1,26 @@
+{
+  "name": "persona1",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "corepack pnpm build && node --test tests/**/*.test.mjs",
+    "dev:api": "node dist/apps/persona1-api/src/main.js",
+    "start:api": "corepack pnpm build && node dist/apps/persona1-api/src/main.js",
+    "validate:extension": "node apps/persona1-ext/scripts/validate-extension.mjs",
+    "smoke:api": "corepack pnpm build && node scripts/smoke-api.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "stripe": "^18.5.0",
+    "yaml": "^2.8.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.1",
+    "@types/pg": "^8.15.5",
+    "typescript": "^5.8.2"
+  }
+}

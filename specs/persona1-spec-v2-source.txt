@@ -1,0 +1,652 @@
+persona1
+Chess engine for human conversation.
+world1 monorepo  ·  apps/persona1  ·  Full Build Spec v2.0  ·  March 2026
+This document is implementation-ready. It covers the complete kernel: product thesis, passive learning architecture, AI inference pipeline, prompt contracts, Chrome extension spec, backend schema, distribution kernel, and MVP build order. Read section 11 first if you are starting the build tonight.
+0. Where This Lives in world1
+persona1 is a business unit deployed from the world1 monorepo. It follows the same config-driven architecture as every other world1 business: shared infrastructure, shared type contracts, business-specific config and UI.
+Directory
+Purpose
+apps/persona1-ext
+Chrome extension — Manifest V3, sidebar UI, content scripts, service worker
+apps/persona1-api
+Cloud Run API — inference endpoints, persona management, billing hooks
+businesses/persona1
+Business config — presets, pricing tiers, feature flags, prompt templates
+packages/ai-kernel
+Shared inference primitives — prompt builder, response parser, token counter
+packages/persona-engine
+Shared persona schema, update logic, mirror trigger
+packages/db
+Shared Postgres client, migrations, interaction log schema
+packages/billing
+Shared Stripe client, plan enforcement, usage metering
+infra/persona1
+GCP Cloud Run config, Secret Manager refs, Cloud SQL connection
+specs/persona1.md
+This document, markdown version for Codex cold-start
+AI-OS orchestration (social posting, reply automation, persona accounts) runs separately under businesses/setta and the social workflow configs. It is not part of the persona1 application kernel. Distribution is infrastructure. persona1 is the product.
+1. The Problem
+Most people know what they want to say. They do not know how it will land.
+Every message is a move in a game played partially blind. The sender cannot see the board from the other side. They do not know if their tone reads as confident or arrogant, warm or desperate, direct or cold. They hit send and wait.
+Every tool built to solve this — Grammarly, Rizz, Keys.ai, every AI rewriter — only models the sender. They make your words cleaner. None of them model the recipient. None of them show the downstream consequences of what you are about to send.
+The result: people either say nothing because they are unsure how it will land, say something wrong and lose the moment, or copy templates that do not sound like them and feel fake to both parties.
+persona1 solves a different problem: not how to write better, but how to see the conversation before you are in it.
+2. The Product
+2.1 Core Loop
+persona1 is a Chrome extension that reads the conversation you are in — the recipient's profile, message history, platform context — and renders a chess-style move tree before you respond.
+You type a draft. persona1 shows three predicted branches: if you send this, the conversation is likely to go here. You see where each path leads. You pick your move with full board visibility.
+The output is not a rewrite. It is a map. The user decides. persona1 provides the intelligence.
+The single biggest product risk: fake game tree. Branches that are obviously generic or predicted responses that feel like fanfiction will destroy trust on first use. Every prompt engineering decision in this spec is oriented around one rule: specificity over confidence. A slightly wrong specific prediction is more useful than a vague accurate one. The system must appear to be modeling the other person, not hedging.
+2.2 Differentiation
+persona1
+every other tool
+models
+both sides of the conversation
+only the sender
+output
+predicted conversation branches
+rewritten text
+learning
+passive — observes behavior, never asks
+stateless or form-based
+context
+reads recipient profile and thread automatically
+user pastes manually
+memory
+builds calibrated model over time, version-controlled
+no persistence
+philosophy
+shows consequences before sending
+makes words sound better
+2.3 The Chess UI — Exactly
+Three options max. Not five. Not a menu. Three.
+The recommended option is visually dominant — full card, highlighted. The other two are secondary. Each card renders:
+The message — in the user's voice, specific to this moment, not a template
+Predicted response — what the recipient is likely to say back. Must be specific enough to be possibly wrong.
+Branch path — where the conversation goes in two moves. One sentence.
+Why it works — one line, the strategic logic. Collapsed by default.
+Risk — one line, amber flag if goal alignment < 60. Collapsed by default.
+Users can copy any card or click Use This to insert directly into the compose box. Keyboard shortcuts: 1, 2, 3 to select. Enter to copy. That is the entire interaction model.
+2.4 The Mirror Feature
+After 25 interactions, persona1 begins surfacing patterns about the user's communication that they have not noticed. Not as a report. As observations that emerge when the data supports them.
+'You hedge before every direct ask. It costs you.'
+'You bury the point in professional messages. Your first sentence is rarely your real ask.'
+'You are funnier in casual contexts than professional ones. You suppress it at work.'
+Mirror insights are the retention hook. The product becomes a communication coach that knows the user specifically. Switching cost grows every week. After three months the persona model is irreplaceable.
+2.5 Situation Presets
+Each preset changes the strategic objective of the inference call — not just tone, but what the model optimizes for.
+Preset
+Strategic objective
+date
+Create attraction, maintain tension, escalate without pressure. Avoid desperation signals.
+negotiate
+Anchor high, find mutual benefit frame, preserve relationship after the ask.
+apologize
+Own fully, no defense, leave them feeling heard not managed.
+pitch
+Hook in sentence one, build credibility fast, close with a low-friction ask.
+reconnect
+Warm without desperation. Give them an easy yes. No pressure signal.
+confront
+Say the thing directly. Stay calm. Do not leave an escape hatch.
+close
+Remove uncertainty. Make next step obvious. No over-explaining.
+decline
+Firm, warm, no guilt, no over-justification.
+2.6 Virality Mechanic
+The chess tree visualization is the screenshot. When a user shares a persona1 output they are sharing a conversation map — a visually novel, immediately legible artifact that makes the product self-explaining.
+Secondary mechanic: communication scorecards. After a conversation, persona1 rates the user's actual performance across confidence, clarity, strategic alignment, and emotional read. Users share scores the same way they share personality test results. Identity content that markets the product passively.
+3. Passive Learning Architecture
+3.1 Philosophy
+There is no onboarding form. There is no setup. The extension installs, watches the user's first real conversations, and builds the persona profile from observed behavior.
+Self-reported data is biased. People describe who they want to be. Observed behavior is the truth. A user who says they are 'direct' but hedges in every draft gets a persona profile that reflects the hedge, not the self-image. That is what makes the outputs feel accurate.
+Cold start: on first install, the user selects one primary context (dating, professional, general) with a single tap. That seeds the situation preset default and gives the inference model a prior. Everything else is observed from that point forward. Zero forms.
+3.2 The Three Learning Phases
+Phase 1 — Observation Mode (uses 1-5)
+The model has only the cold-start prior. Branches are generated with lower personalization confidence. The system logs everything silently: full draft text, what the user edited before sending, which option they chose, platform, preset, recipient context hash. No output is shown to the user about this. They just use the product.
+Phase 2 — Active Calibration (uses 6-25)
+Enough signal exists to begin personalizing. The persona profile JSON is populated field by field from observed patterns. The branch generation prompt starts injecting persona-specific constraints. Outputs begin to sound noticeably different from generic rewrites. The model starts flagging when the user's draft is working against their own patterns.
+Phase 3 — Mirror Activation (use 25+)
+The mirror prompt runs. Pattern thresholds are checked. When a pattern has 5+ data points, it is surfaced as an insight. The persona profile is now version-controlled — every update increments the version field and diffs are logged. The model is the user's. Exporting or losing it is a real loss.
+3.3 Observation Pipeline
+The content script runs a MutationObserver on every compose context it detects. It logs:
+draft_raw — the text before any edits
+draft_final — the text after edits, before send
+delta — computed diff between raw and final. This is the highest-signal field. It shows what the user instinctively removes or adds.
+option_chosen — which branch they selected (1, 2, or 3)
+option_rejected — which they dismissed first
+platform — extracted from URL pattern
+recipient_context_hash — one-way hash of recipient signals. Not PII. Just a stable identifier for 'this type of person'.
+session_id — groups interactions in the same sitting
+All observation data is stored locally first in Chrome extension storage. It is synced to backend only when the user is on a paid plan. Free tier users have local-only persona profiles.
+3.4 Persona Profile Schema (v1)
+Stored as JSONB in the personas table, versioned on every update, injected into every inference call.
+{
+"version": 14,
+"confidence": 0.72,
+"communication_defaults": {
+"formality_range": "low-medium",
+"humor_style": "dry, self-aware",
+"emotional_expression": "suppressed — reads as calm",
+"directness": "high in casual, medium in professional",
+"warmth_baseline": "medium"
+},
+"observed_patterns": [
+{ "pattern": "hedges before direct asks", "count": 8, "confidence": 0.91 },
+{ "pattern": "buries real ask in second paragraph", "count": 6, "confidence": 0.83 },
+{ "pattern": "removes humor before sending in professional contexts", "count": 5, "confidence": 0.78 }
+],
+"known_strengths": ["concise under pressure", "good at reframing"],
+"known_weaknesses": ["apologizes unnecessarily", "over-explains when uncertain"],
+"context_performance": {
+"date": { "positive_outcomes": 11, "negative_outcomes": 2, "neutral": 4 },
+"pitch": { "positive_outcomes": 5, "negative_outcomes": 3, "neutral": 2 }
+},
+"platform_calibration": {
+"linkedin": { "tone_shift": "more formal than baseline" },
+"dating_app": { "tone_shift": "warmer, shorter sentences" }
+},
+"last_updated": "2026-03-16T02:14:00Z",
+"interaction_count": 47
+}
+4. AI Inference Pipeline
+4.1 Pipeline Architecture
+Every persona1 inference call is a four-stage pipeline. Each stage is a separate prompt call. Stages 1 and 2 run in parallel. Stage 3 depends on both. Stage 4 is async, post-interaction.
+Stage
+Description
+1 — context_extractor
+Reads page DOM. Extracts recipient signals. Outputs recipient context JSON. Runs on page load, cached per session.
+2 — persona_loader
+Reads persona profile from storage. Applies platform calibration. Outputs calibrated persona JSON for this context.
+3 — branch_generator
+Core call. Receives draft + recipient context + calibrated persona + situation preset. Outputs 3 branch objects.
+4 — persona_updater
+Async. Runs after outcome signal. Receives current persona + interaction data + outcome. Outputs updated persona JSON. Increments version.
+5 — mirror_trigger
+Async. Runs at interaction_count % 25 === 0. Receives full interaction log. Outputs 1-3 insight strings if pattern thresholds met.
+4.2 Stage 1 — context_extractor Prompt
+SYSTEM:
+You are a context extraction kernel for a conversation intelligence system.
+Read the page content and extract structured signals about the recipient.
+Output ONLY valid JSON. No commentary. No markdown fences.
+If a field cannot be determined, set it to null.
+Do not infer. Only extract what is actually present.
+Output schema:
+{
+"recipient_name": string | null,
+"recipient_handle": string | null,
+"communication_style": "formal" | "casual" | "professional" | "warm" | "terse" | "verbose",
+"emotional_state_signals": string[],
+"relationship_type": "stranger" | "acquaintance" | "colleague" | "romantic" | "friend",
+"platform": "linkedin" | "twitter" | "gmail" | "dating_app" | "slack" | "other",
+"thread_summary": string,
+"recipient_last_message": string | null,
+"inferred_wants": string,
+"inferred_concerns": string,
+"context_confidence": 0-100
+}
+USER: {PAGE_CONTENT}
+4.3 Stage 3 — branch_generator Prompt
+This is the core call. The fake game tree risk lives entirely in this prompt. The specificity rule is enforced here.
+SYSTEM:
+You are the inference engine for persona1, a conversation intelligence system.
+You receive:
+- A calibrated model of the sender: how they communicate, their patterns, their gaps
+- A real-time model of the recipient: extracted from the live conversation
+- The sender's current draft
+- The situation preset (date / pitch / negotiate / etc)
+Your job: generate exactly 3 message options, each with a predicted conversation branch.
+CRITICAL RULES:
+1. Every option must sound like the sender. Not generic AI. Not a template.
+If the persona profile shows they write in fragments, write in fragments.
+If they avoid exclamation marks, do not use them.
+2. Predicted responses must be SPECIFIC. A prediction like 'she might respond
+positively' is a failure. A prediction like 'she will probably deflect with
+humor and change the subject' is a success. Be specific enough to be wrong.
+3. Branch paths must name real downstream consequences, not vague directions.
+4. If the user's draft is actively working against their stated goal,
+flag it explicitly in draft_warning. Do not silently fix it.
+5. Option 1 is the recommended option. It is not always the safest.
+It is the one most aligned with the goal given the full context.
+6. Never moralize. Never add disclaimers. Show the board.
+Output: valid JSON array of exactly 3 objects.
+{
+"option_id": 1 | 2 | 3,
+"is_recommended": boolean,
+"message": string,
+"predicted_response": string,
+"branch_path": string,
+"goal_alignment_score": 0-100,
+"why_it_works": string,
+"risk": string | null
+}
+Also output at root level:
+{
+"draft_warning": string | null,
+"branches": [option1, option2, option3]
+}
+SENDER PERSONA: {PERSONA_JSON}
+RECIPIENT CONTEXT: {CONTEXT_JSON}
+SITUATION: {PRESET}
+DRAFT: {USER_DRAFT}
+4.4 Stage 4 — persona_updater Prompt
+SYSTEM:
+You are the persona update kernel for persona1.
+You receive the current persona profile JSON, a completed interaction,
+and an outcome signal (positive / neutral / negative).
+Update the persona JSON based on what this interaction reveals.
+Rules:
+- Be conservative. One data point does not override an established pattern.
+- Only update fields where this interaction adds meaningful signal.
+- Increment version by 1.
+- Update last_updated to current ISO timestamp.
+- Increment interaction_count by 1.
+- Update context_performance for the relevant preset.
+- If a new observed_pattern is evident, add it with count: 1, confidence: 0.4.
+- If an existing pattern was confirmed, increment count and recalculate confidence.
+- If an existing pattern was contradicted, decrement confidence. Remove if < 0.3.
+Output: updated persona JSON only. No commentary.
+CURRENT_PERSONA: {PERSONA_JSON}
+INTERACTION: { preset, draft_sent, option_chosen, recipient_context_hash }
+OUTCOME: "positive" | "neutral" | "negative"
+4.5 Stage 5 — mirror_trigger Prompt
+SYSTEM:
+You are the mirror kernel for persona1.
+You receive a user's full interaction log: their drafts, chosen options,
+rejected options, outcome signals, and the delta between what they wrote
+and what they sent.
+Your job: surface 1-3 communication patterns this person has not noticed.
+Rules:
+- Only surface patterns with 5+ supporting data points.
+- Be specific. Not 'you hedge sometimes.' Say 'you hedge before every direct ask.'
+- Frame as observation, not advice. Do not tell them what to do.
+- One sentence per insight. No softening. No praise sandwich.
+- If no pattern meets the 5-point threshold, return an empty array.
+- Do not invent patterns. Only report what the data shows.
+Output: JSON array of insight strings. May be empty.
+INTERACTION_LOG: {LOG_JSON}
+5. Chrome Extension — Full Spec
+5.1 Manifest V3 Structure
+Field
+Value
+manifest_version
+3
+name
+persona1
+permissions
+activeTab, storage, scripting, identity
+host_permissions
+https://*/*
+background
+service_worker: background.js
+content_scripts
+matches: <all_urls>, js: [content.js], run_at: document_idle
+action
+default_popup: popup.html
+web_accessible_resources
+sidebar.html, sidebar.js, assets/*
+5.2 File Architecture
+File
+Responsibility
+background.js
+Service worker. Handles API calls, auth token management, persona sync, usage metering, message passing from content script.
+content.js
+Injected on all pages. Runs MutationObserver. Detects compose contexts. Injects sidebar. Handles DOM extraction per platform. Logs observation data.
+sidebar.html / sidebar.js
+Main inference UI. Chess tree rendering. Option selection. Outcome capture. Mirror insight display.
+popup.html / popup.js
+Quick status: persona confidence, usage count, plan status, settings shortcut.
+extractors/linkedin.js
+LinkedIn-specific DOM extraction handler.
+extractors/gmail.js
+Gmail-specific DOM extraction handler.
+extractors/twitter.js
+Twitter/X DM extraction handler.
+extractors/dating.js
+Tinder / Hinge / Bumble extraction handler.
+extractors/slack.js
+Slack DM and channel extraction handler.
+extractors/fallback.js
+Generic selected-text + page title fallback.
+5.3 Platform Extraction Handlers
+Platform
+Extraction approach
+LinkedIn
+Recipient name from .msg-s-event-listitem__link. Thread from .msg-s-message-list__event. Profile data from .pv-top-card if sidebar visible.
+Gmail
+Thread from .a3s.aiL containers, newest first. Recipient from .gD. Subject from h2.hP.
+Twitter/X DMs
+Thread from [data-testid='conversation']. Recipient handle from conversation header. Bio from recipient profile if linked.
+Tinder / Hinge
+Messages from .messageList or [data-testid='msg']. Match name from profile header. Bio from match card if expanded.
+Slack
+Messages from .c-message_kit__text. Channel or DM name from sidebar. Thread context from .p-thread_view if in thread.
+Fallback
+window.getSelection() for selected text. document.title for context. URL pattern for platform inference.
+5.4 Sidebar State Machine
+State
+Render
+idle
+Collapsed pill: 'persona1' + toggle. Fixed bottom-right.
+compose_detected
+Auto-expands. Shows recipient name if extracted. 'Analyzing...' shimmer.
+context_ready
+Shows context preview: 'Reading [name] on [platform]'. Analyze CTA.
+analyzing
+Spinner. 'Building move tree...'
+branches_ready
+Full chess tree. 3 cards. Option 1 highlighted as recommended.
+option_selected
+Selected card expanded. Use This / Copy buttons. Outcome prompt queued for 10 min.
+outcome_capture
+Surfaces after 10 min delay. One question: 'How did it go?' 3 taps: positive / neutral / negative. Dismissable.
+mirror_ready
+Insight card appears above chess tree. One observation. Dismissable. Logged as seen.
+error
+Minimal: 'Could not read context. Paste your message below.' Manual fallback input.
+5.5 Chrome Storage Schema
+Key
+Type / Description
+p1_persona
+JSON — full versioned persona profile
+p1_user_id
+String — UUID, assigned on first install
+p1_auth_token
+String — JWT, refreshed via background.js
+p1_plan
+Object — { tier, expires_at, stripe_customer_id }
+p1_usage_count
+Integer — free tier counter, checked before every call
+p1_onboarding_done
+Boolean — cold-start preset selection complete
+p1_cold_start_context
+String — 'dating' | 'professional' | 'general'
+p1_interaction_log
+Array — last 100 interactions, capped, used for mirror trigger
+p1_observation_queue
+Array — pending observations not yet synced to backend
+p1_mirror_insights
+Array — surfaced insights, with seen flag
+p1_settings
+Object — sidebar position, auto-expand, shortcut overrides
+5.6 Keyboard Shortcuts
+Shortcut
+Action
+Cmd/Ctrl + Shift + P
+Toggle sidebar
+Cmd/Ctrl + Shift + A
+Analyze immediately
+1
+Select option 1 (recommended)
+2
+Select option 2
+3
+Select option 3
+Enter
+Copy selected to clipboard
+Esc
+Collapse sidebar
+6. Backend — apps/persona1-api
+6.1 Stack
+Component
+Implementation
+Runtime
+Node.js / TypeScript — consistent with world1 monorepo
+Deployment
+GCP Cloud Run — serverless, scales to zero, existing infra
+Database
+Cloud SQL (Postgres) — existing instance, add persona1 schema via migration
+Auth
+Firebase Auth — JWT verification in middleware
+Payments
+Stripe — subscriptions + one-time usage, webhook handler
+AI
+Anthropic Claude API — claude-sonnet-4-6, all inference calls
+Secrets
+GCP Secret Manager — ANTHROPIC_API_KEY, STRIPE_SECRET, DB_URL
+Logging
+GCP Cloud Logging — structured JSON logs, request tracing
+Config
+businesses/persona1/config.yaml — presets, pricing, feature flags
+6.2 API Surface
+Endpoint
+Description
+POST /v1/analyze
+Core inference. Receives { draft, context_json, preset, user_id }. Returns branch tree JSON. Checks plan + usage before executing.
+POST /v1/persona/update
+Receives outcome signal. Runs persona_updater. Returns updated persona JSON.
+GET /v1/persona/:user_id
+Returns current persona JSON. Used for cross-device sync on paid plans.
+POST /v1/persona/sync
+Receives local persona from extension. Merges with server version. Returns canonical.
+POST /v1/mirror/check
+Runs mirror_trigger if interaction_count threshold met. Returns insights array.
+POST /v1/auth/register
+Creates user record, assigns UUID, returns JWT.
+POST /v1/billing/checkout
+Creates Stripe checkout session for selected plan.
+POST /v1/billing/webhook
+Stripe webhook. Updates plan status in users table.
+GET /v1/usage/:user_id
+Returns { usage_count, plan, cost_this_period }.
+GET /v1/health
+Health check for Cloud Run.
+6.3 Database Schema
+users
+Column
+Type
+id
+UUID primary key
+email
+TEXT not null
+firebase_uid
+TEXT unique
+plan
+ENUM('free','monthly','unlimited','world1') default 'free'
+plan_expires_at
+TIMESTAMPTZ nullable
+stripe_customer_id
+TEXT nullable
+usage_count
+INTEGER default 0
+api_cost_this_period
+NUMERIC(8,4) default 0
+cold_start_context
+ENUM('dating','professional','general') nullable
+created_at
+TIMESTAMPTZ default now()
+personas
+Column
+Type
+id
+UUID primary key
+user_id
+UUID FK → users, cascade delete
+profile_json
+JSONB not null
+version
+INTEGER default 1
+interaction_count
+INTEGER default 0
+updated_at
+TIMESTAMPTZ default now()
+interactions
+Column
+Type
+id
+UUID primary key
+user_id
+UUID FK → users
+platform
+TEXT
+preset
+TEXT
+draft_raw
+TEXT
+draft_final
+TEXT
+draft_delta
+JSONB
+branches_output
+JSONB
+option_chosen
+SMALLINT
+outcome_signal
+ENUM('positive','neutral','negative') nullable
+recipient_context_hash
+TEXT
+persona_version_at_call
+INTEGER
+created_at
+TIMESTAMPTZ default now()
+mirror_insights
+Column
+Type
+id
+UUID primary key
+user_id
+UUID FK → users
+insight_text
+TEXT
+triggered_at_interaction
+INTEGER
+seen_at
+TIMESTAMPTZ nullable
+created_at
+TIMESTAMPTZ default now()
+7. Monetization
+7.1 Pricing Tiers
+tier
+price
+limits
+includes
+free
+$0
+3 total uses
+Cold start, 3 analyses, local persona only
+monthly
+$9/mo
+$6 API cost cap, then throttle
+Unlimited analyses, persona sync, mirror feature
+unlimited
+$19/mo
+No cap
+Priority inference, multi-device, export, early presets
+world1 bundle
+$29/mo
+All apps
+persona1 Unlimited + all current and future world1 apps
+7.2 Cost Control
+Monthly tier: $6 API cost cap per billing period. Above this threshold the system throttles response latency — not quality. A soft upgrade nudge appears. No hard cutoff. Hard cutoffs create churn. Throttling creates upgrade motivation.
+At $9/month with a $6 cost cap, gross margin per user is $3 before infrastructure overhead. At volume, Anthropic API pricing improves via negotiation. Prompt caching on the persona profile (same system prompt across calls) reduces token cost significantly.
+7.3 Paywall Gate
+Free tier uses are counted in Chrome local storage at p1_usage_count. The background service worker checks this before every /v1/analyze call. On the 4th attempt, the Stripe checkout flow is triggered inline in the sidebar. No redirect. No new tab. Stripe embedded checkout inside the extension sidebar.
+8. Distribution Kernel
+8.1 Separation of Concerns
+The distribution layer runs inside AI-OS, not inside the persona1 application. It is infrastructure. The persona1 product spec does not depend on it. Distribution is a world1 concern, not a persona1 concern.
+What follows is the distribution spec as it relates to persona1 launch. It lives in businesses/persona1/distribution.yaml in the monorepo.
+8.2 Founder Account — The Real Demo
+One X account. Real identity. The founder is publicly building something and the account documents it. The account does not pitch persona1. It becomes the proof of concept — a person who always knows what to say, building a product that teaches you to do the same.
+The account IS the demo. Every post demonstrates the product thesis through the founder's own communication. The best way to sell a communication tool is to communicate like someone who uses it.
+8.3 Content Formula
+Post type
+Formula
+outcome post
+Result first. No context. Then the before/after. Then the chess tree screenshot. The screenshot is the product demo.
+observation
+The thing people already suspect but nobody says cleanly. No persona1 mention. Pure signal that this account sees differently.
+motion post
+One line about what shipped. No features. Just velocity. 'The tree is working.' 'First paying user at 2am.'
+mirror drop
+Post a persona1 mirror insight, anonymized. 'A user just learned they apologize 6 times per conversation. Most people do.'
+contrast
+Common belief, flipped one layer. Last sentence unfinished. Let them complete it.
+8.4 AI-OS Automation Config
+Runs under businesses/persona1/social-post.yaml and social-reply.yaml. Active after R4500U deployment with 5 static residential proxies, one Chrome profile per account.
+5 X accounts, separate proxies, separate profiles, created clean
+1-2 posts per account per day, generated from content formula above
+Reply loop: target accounts with >300 followers, >20 engagement, posted within 24h, in founder/SaaS/communication/dating discourse
+Reply rules: add tension or contrast. Never agreement. Never praise. Attack the half-right hidden assumption.
+No hashtags. No engagement pods. No follow-for-follow.
+8.5 Launch Sequence
+Founder account reaches 300+ followers organically, before product mention
+Post the demo: real conversation, real chess tree screenshot, real outcome
+Link to Framer landing page — one CTA, one headline, one install button
+First 50 users onboarded manually — founder in DMs, real feedback loop
+First paying user within 48 hours of demo post
+Scale AI-OS accounts once product stickiness is confirmed
+9. Risk Register
+Risk
+Severity
+Mitigation
+Fake game tree destroys trust on first use
+CRITICAL
+Specificity rule hardcoded into branch_generator prompt. Every predicted response must be specific enough to be possibly wrong. Internal review of first 20 outputs before scaling distribution.
+Passive learning produces wrong persona model
+HIGH
+Conservative update rules in persona_updater. Confidence thresholds. Pattern requires 5+ data points before surfacing. User can view and edit persona profile at any time.
+Cognitive load from chess tree — users want relief not homework
+HIGH
+Three options max. One clearly recommended. Why it works collapsed by default. Design optimizes for 'what should I send' not 'here is a full analysis.'
+DOM extraction breaks on platform updates
+MEDIUM
+Modular handlers, one file per platform. Fallback to manual paste with graceful UI. Monitor for extraction failures in Cloud Logging.
+Output sounds like the user but still feels manipulative
+MEDIUM
+Frame as intelligence not manipulation throughout. Mirror feature builds self-awareness. Avoid 'trick them' language in UI copy.
+Outcome signal too noisy to train on
+MEDIUM
+Three-option outcome signal (positive/neutral/negative) not binary. Weight recency. Mirror requires 5 data points per pattern. Persona updater is conservative by design.
+Chrome extension install friction kills funnel top
+LOW
+Framer landing page optimized for install CTA. Demo video shows the chess tree immediately. Web app fallback for validation if needed.
+API costs erode margin
+LOW
+Prompt caching on persona system prompt. $6 cost cap on monthly tier. At scale, negotiate Anthropic volume pricing.
+10. Success Metrics
+10.1 Week 1
+First paying user
+10 users complete cold-start selection
+At least one chess tree screenshot shared organically
+Founder account at 200+ followers
+10.2 Month 1
+100 paying users
+Retention: >60% of paying users use it 3+ times in week 2 (habit proxy)
+At least 3 mirror insights have fired (means users reached 25 interactions)
+CAC: under $15 via organic only
+No platform bans on distribution accounts
+10.3 Platform Threshold
+1,000 paying users = begin world1 aggregation layer
+$9,000 MRR before building any new app
+Persona profile export demand = signal that lock-in is real
+11. MVP Build Order — Tonight
+This is the only section that matters for the first build session. Everything else in this document is the target. This is the cut.
+11.1 What Ships
+Chrome extension scaffold — Manifest V3, background.js, content.js, sidebar shell
+Cold-start selection — one tap on install. dating / professional / general. Sets p1_cold_start_context.
+LinkedIn and Gmail extractors only — two platforms. Fallback for everything else.
+Branch generator prompt + /v1/analyze endpoint — this is the product. Get this right first.
+Sidebar chess tree UI — three cards, option 1 highlighted, Use This button, copy to clipboard
+Paywall after 3 uses — Stripe embedded checkout in sidebar, $9/month only (no tiers yet)
+Local persona storage only — Chrome storage, no backend sync yet
+Observation logging — log draft_raw, draft_final, option_chosen to p1_interaction_log
+GCP Cloud Run backend — /v1/analyze, /v1/auth/register, /v1/billing/checkout, /v1/billing/webhook
+11.2 What Does Not Ship
+persona_updater — needs outcome signal loop. Week 2.
+mirror_trigger — needs 25 interactions per user. Not possible at launch.
+Outcome capture — the delayed prompt. Week 2.
+Twitter, dating app, Slack extractors — LinkedIn and Gmail first.
+Multi-device sync — local only at MVP.
+Scorecard virality mechanic — Week 2.
+All presets except date, pitch, negotiate — three presets at MVP.
+Unlimited and world1 bundle tiers — $9/month only at launch.
+11.3 Build Priority Order
+If you run out of time, stop at whichever step you are on. Each step is a shippable state.
+branch_generator prompt — get the core inference right. Test it manually with 10 real drafts before wiring any UI.
+/v1/analyze endpoint — Cloud Run, accepts draft + platform + preset, returns 3 branches
+content.js — detects compose context on LinkedIn and Gmail, injects sidebar
+sidebar UI — three cards, copy, Use This, keyboard shortcuts 1/2/3/Enter
+Cold-start tap on popup.html
+Paywall gate — usage counter + Stripe checkout
+Observation logging — runs silently behind everything else
+persona1 spec v2.0  ·  apps/persona1  ·  world1 monorepo  ·  March 2026
