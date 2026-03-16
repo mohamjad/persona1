@@ -10,7 +10,8 @@
     "dev:api": "node dist/apps/persona1-api/src/main.js",
     "start:api": "corepack pnpm build && node dist/apps/persona1-api/src/main.js",
     "validate:extension": "node apps/persona1-ext/scripts/validate-extension.mjs",
-    "smoke:api": "corepack pnpm build && node scripts/smoke-api.mjs"
+    "smoke:api": "corepack pnpm build && node scripts/smoke-api.mjs",
+    "smoke:extension": "corepack pnpm build && node scripts/smoke-extension.mjs"
   },
   "dependencies": {
     "pg": "^8.16.3",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@types/node": "^24.6.1",
     "@types/pg": "^8.15.5",
+    "playwright": "^1.58.2",
     "typescript": "^5.8.2"
   }
 }

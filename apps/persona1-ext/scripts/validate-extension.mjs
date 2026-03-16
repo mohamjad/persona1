@@ -41,8 +41,8 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "u
 if (manifest.manifest_version !== 3) {
   throw new Error("Extension must remain on Manifest V3.");
 }
-if (!manifest.commands?.toggle_sidebar || !manifest.side_panel?.default_path) {
-  throw new Error("Manifest is missing required commands or side panel configuration.");
+if (!manifest.commands?.toggle_sidebar) {
+  throw new Error("Manifest is missing the required toggle command.");
 }
 
 process.stdout.write("persona1 extension validation passed\n");

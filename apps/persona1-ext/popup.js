@@ -1,8 +1,10 @@
 import { MESSAGE_TYPES } from "./lib/messages.js";
+import { COMMAND_TYPES } from "./lib/messages.js";
 import { getExtensionState, updateSettings } from "./lib/persona-store.js";
 import { deriveCommunicationScorecard, formatScorecardForSharing } from "./lib/scorecard.js";
 
 const statusNode = document.querySelector("#popup-status");
+const openSidePanelButton = document.querySelector("#open-sidepanel");
 const apiBaseUrlInput = document.querySelector("#api-base-url");
 const saveSettingsButton = document.querySelector("#save-settings");
 const scorecardHeadline = document.querySelector("#scorecard-headline");
@@ -26,6 +28,14 @@ document.querySelectorAll("[data-cold-start]").forEach((button) => {
       ? `Cold start saved: ${button.getAttribute("data-cold-start")}.`
       : response.error;
   });
+});
+
+openSidePanelButton.addEventListener("click", async () => {
+  const response = await chrome.runtime.sendMessage({
+    type: MESSAGE_TYPES.sidebarCommand,
+    command: COMMAND_TYPES.toggleSidebar
+  });
+  statusNode.textContent = response?.ok ? "Opened the workspace." : response?.error || "Could not open the workspace.";
 });
 
 saveSettingsButton.addEventListener("click", async () => {

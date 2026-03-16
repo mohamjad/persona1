@@ -2,7 +2,7 @@ business:
   slug: persona1
   name: persona1
   inference_provider: openrouter
-  default_model: openai/gpt-4.1-mini
+  default_model: openai/gpt-4.1
   product_mode: chrome_extension
   api_base_url: http://127.0.0.1:8787
 
@@ -20,7 +20,7 @@ extension:
     - slack
     - dating_app
     - fallback
-  sidebar_default: side_panel
+  sidebar_default: embedded_workspace
   free_tier_local_first: true
 
 presets:

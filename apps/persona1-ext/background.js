@@ -16,20 +16,17 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
-  await openSidePanel(tab?.id);
+  await toggleEmbeddedPanel(tab?.id);
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (command === COMMAND_TYPES.toggleSidebar) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    await openSidePanel(tab?.id);
+    await toggleEmbeddedPanel(tab?.id);
     return;
   }
 
-  await chrome.runtime.sendMessage({
-    type: MESSAGE_TYPES.sidebarCommand,
-    command
-  });
+  await sendWorkspaceCommand(tab?.id, command);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -87,11 +84,12 @@ async function handleMessage(message, sender) {
 
     case MESSAGE_TYPES.sidebarCommand:
       if (message.command === COMMAND_TYPES.toggleSidebar) {
-        await openSidePanel(sender.tab?.id);
+        const targetTabId = sender.tab?.id ?? (await getActiveTabId());
+        await toggleEmbeddedPanel(targetTabId);
         return { ok: true };
       }
 
-      await chrome.runtime.sendMessage(message);
+      await sendWorkspaceCommand(sender.tab?.id ?? (await getActiveTabId()), message.command);
       return { ok: true };
 
     default:
@@ -234,15 +232,28 @@ async function handleCheckoutRequest(payload) {
   };
 }
 
-async function openSidePanel(tabId) {
-  if (!tabId || !chrome.sidePanel?.open) {
+async function toggleEmbeddedPanel(tabId) {
+  if (!tabId) {
     return;
   }
 
-  await chrome.sidePanel.setOptions({
-    tabId,
-    path: "sidepanel.html",
-    enabled: true
-  });
-  await chrome.sidePanel.open({ tabId });
+  await chrome.tabs.sendMessage(tabId, {
+    type: "persona1:toggle-embedded-panel"
+  }).catch(() => null);
+}
+
+async function sendWorkspaceCommand(tabId, command) {
+  if (!tabId) {
+    return;
+  }
+
+  await chrome.tabs.sendMessage(tabId, {
+    type: "persona1:workspace-command",
+    command
+  }).catch(() => null);
+}
+
+async function getActiveTabId() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab?.id;
 }

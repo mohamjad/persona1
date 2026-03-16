@@ -24,7 +24,7 @@ Distribution may be documented in this repo for completeness, but it should not 
 The source spec assumes a world1-style modular layout. In this repo, that target topology should still be preserved:
 
 - `apps/persona1-ext`
-  Chrome extension, Manifest V3, sidebar UI, content scripts, service worker
+  Chrome extension, Manifest V3, injected workspace UI, content scripts, service worker
 - `apps/persona1-api`
   Cloud Run API, inference endpoints, auth, billing hooks, sync endpoints
 - `packages/ai-kernel`
@@ -69,7 +69,7 @@ The extension owns:
 
 - compose detection
 - DOM extraction
-- side panel UI
+- injected workspace UI
 - keyboard shortcuts
 - local observation logging
 - local persona storage
@@ -142,7 +142,7 @@ The repo currently implements:
 - Slack extractor
 - dating-app extractor
 - fallback extractor
-- side panel chess-tree UI
+- injected workspace chess-tree UI
 - popup onboarding and settings
 - full preset catalog across date, pitch, negotiate, apologize, reconnect, confront, close, and decline
 - analyze endpoint
@@ -177,5 +177,6 @@ The repo currently implements:
 The code intentionally deviates from the original source spec in one active operational place:
 
 1. `OpenRouter` is the active inference provider instead of direct Anthropic integration.
+2. The active MVP UI is an injected in-page workspace instead of Chrome's native side panel because the embedded workflow is more reliable under MV3 gesture restrictions and avoids blocked-page edge cases.
 
 The auth story is no longer a structural deviation because a Firebase-compatible verifier already exists in code. The runtime still defaults to `local_hmac` until Firebase project configuration is supplied.

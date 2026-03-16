@@ -3,7 +3,7 @@
   "name": "persona1",
   "version": "0.1.0",
   "description": "Conversation intelligence that shows the board before you send.",
-  "permissions": ["storage", "activeTab", "scripting", "tabs", "sidePanel"],
+  "permissions": ["storage", "activeTab", "scripting", "tabs"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "persona1",
@@ -12,9 +12,6 @@
   "background": {
     "service_worker": "background.js",
     "type": "module"
-  },
-  "side_panel": {
-    "default_path": "sidepanel.html"
   },
   "commands": {
     "toggle_sidebar": {
@@ -28,24 +25,6 @@
         "default": "Ctrl+Shift+A"
       },
       "description": "Analyze the current compose box"
-    },
-    "select_option_1": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+1"
-      },
-      "description": "Select option 1"
-    },
-    "select_option_2": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+2"
-      },
-      "description": "Select option 2"
-    },
-    "select_option_3": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+3"
-      },
-      "description": "Select option 3"
     },
     "copy_selected": {
       "suggested_key": {

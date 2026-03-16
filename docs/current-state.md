@@ -8,7 +8,7 @@ Current repo status:
 - source-of-truth planning docs created
 - full repo scaffold implemented
 - API implemented
-- Chrome extension implemented
+- Chrome extension implemented with an injected in-page workspace as the active MVP surface
 - local-first persona engine implemented
 - billing and usage gate implemented
 - repository adapters implemented
@@ -48,7 +48,7 @@ Extension capabilities now implemented:
 - Slack extraction
 - dating-app extraction
 - fallback extraction
-- side panel chess tree rendering
+- injected workspace chess tree rendering
 - option insertion into the active compose box
 - full preset catalog in the live UI
 - local usage gate after three uses
@@ -58,6 +58,7 @@ Extension capabilities now implemented:
 - local mirror surfacing
 - local communication scorecard
 - provider-backed persona update and mirror response handling for authenticated flows
+- browser smoke harness for workspace open, onboarding, analysis, and branch insertion
 
 ## What Exists Today
 

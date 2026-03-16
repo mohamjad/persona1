@@ -8,7 +8,7 @@ This repo is no longer a thin scaffold.
 
 The currently implemented product path includes:
 
-- Chrome extension side-panel runtime with cold start, live compose detection, branch rendering, option insertion, outcome capture, mirror surfacing, and local scorecard output
+- Chrome extension injected-workspace runtime with cold start, live compose detection, branch rendering, option insertion, outcome capture, mirror surfacing, and local scorecard output
 - multi-platform extraction across LinkedIn, Gmail, X DMs, Slack, dating-app surfaces, and fallback compose targets
 - OpenRouter-backed analysis with strict contract parsing and provider-backed persona update and mirror inference
 - deterministic local/server fallback behavior for persona evolution when provider paths fail
@@ -49,6 +49,22 @@ The current product direction is:
 `page context -> recipient context -> persona model -> branch tree -> selected move -> outcome -> persona update -> mirror`
 
 The current live implementation is local-first by default, with server-backed sync, billing, and durable storage available when runtime credentials are supplied.
+
+The active MVP UI is an injected in-page workspace rather than Chrome's native side panel. This keeps the compose flow reliable under Manifest V3 gesture constraints and avoids blocked embedded-extension pages.
+
+## Local Runtime
+
+Start the local API:
+
+- `corepack pnpm start:api`
+
+Run the extension smoke with OpenRouter:
+
+- `corepack pnpm smoke:extension`
+
+Validate the extension package:
+
+- `corepack pnpm validate:extension`
 
 ## Documentation Standard
 
