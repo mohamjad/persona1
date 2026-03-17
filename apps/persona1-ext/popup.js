@@ -13,9 +13,9 @@ const copyScorecardButton = document.querySelector("#copy-scorecard");
 
 const state = await getExtensionState();
 apiBaseUrlInput.value = state.settings.apiBaseUrl;
-statusNode.textContent = state.onboardingDone
-  ? `Cold start: ${state.coldStartContext}. Usage: ${state.usageCount}.`
-  : "Cold start not chosen yet.";
+statusNode.textContent = state.settings.apiBaseUrl.includes("127.0.0.1") || state.settings.apiBaseUrl.includes("localhost")
+  ? "Local dev mode. Usage limit disabled."
+  : `Plan: ${state.plan}. Usage: ${state.usageCount}.`;
 renderScorecard(state);
 
 document.querySelectorAll("[data-cold-start]").forEach((button) => {
