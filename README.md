@@ -50,7 +50,7 @@ The current product direction is:
 
 The current live implementation is local-first by default, with server-backed sync, billing, and durable storage available when runtime credentials are supplied.
 
-The active MVP UI is an injected icon-anchored branch bloom rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the three branches attached to that same writing surface, then hit `1`, `2`, or `3` to apply a move. The closed-state icon hides while the bloom is open and can be dragged or dismissed. Cold start and preset selection are inferred from context instead of being exposed in the normal flow.
+The active MVP UI is an injected icon-anchored branch bloom rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the three branches rendered directly on that compose surface, then hit `1`, `2`, or `3` to apply a move. Each branch now leads with the likely outcome instead of burying the consequence below the text. The closed-state icon hides while the bloom is open and can be dragged or dismissed. Cold start and preset selection are inferred from context instead of being exposed in the normal flow.
 
 ## Local Runtime
 

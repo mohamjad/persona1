@@ -40,6 +40,7 @@ export function buildBranchGeneratorPrompt(input: {
           "1. Every move must sound like the sender, not generic AI.",
           "2. The three moves must differ by strategy, not just wording. Examples: low-friction reopen, clean pressure, narrower ask, controlled tension, test of intent.",
           "3. Predicted responses must be specific enough to be wrong. Name the likely move, excuse, deflection, ask, dodge, or emotional reaction.",
+          "3a. Think outcome-first. The visible consequence of each move should be sharper than the wording itself.",
           "4. Branch paths must name concrete downstream consequences, not vague momentum language.",
           "5. Score the current draft with a chess-style annotation: !!, !, !?, ?!, ?, ??.",
           "6. Score each move with the same annotation system.",

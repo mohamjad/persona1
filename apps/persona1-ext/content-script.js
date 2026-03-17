@@ -525,17 +525,19 @@ function ensureRoot() {
     [data-p1-badge-tone="good"] { background: #163a2d; color: #effff8; }
     [data-p1-badge-tone="risky"] { background: #6a241a; color: #fff6f2; }
     [data-p1-badge-tone="neutral"] { background: #5d4a20; color: #fff8e8; }
-    [data-p1-hud="true"] { position: fixed; pointer-events: auto; width: min(360px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 6px; }
-    [data-p1-hud-head="true"] { display: flex; justify-content: flex-end; padding-right: 2px; }
+    [data-p1-hud="true"] { position: fixed; pointer-events: auto; display: flex; flex-direction: column; gap: 6px; }
+    [data-p1-hud-head="true"] { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 2px; }
+    [data-p1-hud-close="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: rgba(255, 251, 244, 0.98); color: #5f5549; border-radius: 999px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font: 700 12px/1 ui-sans-serif, system-ui, sans-serif; }
     [data-p1-inline-note="true"] { padding: 9px 11px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.94); border-radius: 12px; box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12); font-weight: 600; }
     [data-p1-inline-note="true"][data-tone="error"] { border-color: rgba(140, 43, 27, 0.26); background: #fff2ef; color: #7e1e10; }
     [data-p1-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-    [data-p1-branches="true"] { display: flex; flex-direction: column; gap: 6px; }
-    [data-p1-branch-card="true"] { display: flex; flex-direction: column; gap: 5px; padding: 10px 11px; border-radius: 12px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.95); box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12); cursor: pointer; }
+    [data-p1-branches="true"] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
+    [data-p1-branch-card="true"] { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 11px 11px 10px; border-radius: 14px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.96); box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12); cursor: pointer; }
     [data-p1-branch-card="true"][data-selected="true"] { border-color: rgba(22, 18, 13, 0.3); box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12), inset 0 0 0 1px rgba(22, 18, 13, 0.08); }
     [data-p1-branch-card="true"][data-recommended="true"] { background: #f7f0e5; }
     [data-p1-annotation-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     [data-p1-move-label="true"] { font-size: 12px; font-weight: 700; }
+    [data-p1-outcome-lead="true"] { margin: 0; font-size: 12px; line-height: 1.35; color: #2f261f; font-weight: 700; }
     [data-p1-message="true"] { margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.36; }
     [data-p1-small="true"] { margin: 0; color: #5f5549; font-size: 11px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     [data-p1-branch-path="true"] { margin: 0; color: #746a5e; font-size: 11px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
@@ -545,6 +547,9 @@ function ensureRoot() {
     [data-p1-help="true"] { font-size: 11px; color: #6a6054; }
     [data-p1-outcome="true"] { padding: 2px 0 0 2px; }
     [data-p1-outcome-row="true"] { display: flex; gap: 6px; flex-wrap: wrap; }
+    @media (max-width: 760px) {
+      [data-p1-branches="true"] { grid-template-columns: 1fr; }
+    }
   `;
   state.shellRoot = document.createElement("div");
   state.shellRoot.setAttribute("data-p1-shell", "true");
@@ -702,9 +707,10 @@ function buildHudMarkup() {
         : `<div data-p1-inline-note="true">${escapeHtml(draftAssessment.label)}</div>`;
 
   return `
-    <section data-p1-hud="true" style="top:${layout.top}px;left:${layout.left}px;">
+    <section data-p1-hud="true" style="top:${layout.top}px;left:${layout.left}px;width:${layout.width}px;">
       <div data-p1-hud-head="true">
         <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(draftAssessment.annotation)}">${escapeHtml(draftAssessment.annotation)}</span>
+        <button type="button" data-p1-hud-close="true" data-p1-action="close-hud" aria-label="Close move tree">×</button>
       </div>
       ${content}
     </section>
@@ -728,8 +734,9 @@ function buildBranchCard(branch) {
         </div>
         <p data-p1-small="true">${branch.isRecommended ? "recommended" : `${escapeHtml(branch.goalAlignmentScore)}`}</p>
       </div>
+      <p data-p1-outcome-lead="true">likely outcome: ${escapeHtml(branch.predictedResponse)}</p>
       <p data-p1-message="true">${escapeHtml(branch.message)}</p>
-      <p data-p1-small="true">${escapeHtml(branch.predictedResponse)}</p>
+      <p data-p1-small="true">${escapeHtml(branch.strategicPayoff)}</p>
       <p data-p1-branch-path="true">${escapeHtml(branch.branchPath)}</p>
     </article>
   `;
@@ -753,23 +760,32 @@ function buildOutcomeMarkup() {
 
 function computeHudLayout() {
   const composeRect = state.currentComposeTarget ? clampRect(state.currentComposeTarget.getBoundingClientRect()) : null;
-  const width = Math.min(Math.max((composeRect?.right || 0) - (composeRect?.left || 0), 260), 360, window.innerWidth - 24);
+  const composeWidth = Math.max((composeRect?.right || 0) - (composeRect?.left || 0), 0);
+  const maxViewportWidth = Math.max(window.innerWidth - 24, 160);
+  const width = composeRect
+    ? Math.max(
+        Math.min(composeWidth - 16, 860, maxViewportWidth),
+        Math.min(180, Math.max(composeWidth - 16, 0), maxViewportWidth)
+      )
+    : Math.min(360, maxViewportWidth);
 
   if (!composeRect) {
     return {
       top: clampNumber(window.innerHeight / 2 - 90, 12, Math.max(12, window.innerHeight - 220)),
-      left: clampNumber(window.innerWidth / 2 - width / 2, 12, Math.max(12, window.innerWidth - width - 12))
+      left: clampNumber(window.innerWidth / 2 - width / 2, 12, Math.max(12, window.innerWidth - width - 12)),
+      width
     };
   }
 
-  const spaceBelow = window.innerHeight - composeRect.bottom;
+  const compact = width < 760;
+  const overlayHeight = compact ? 244 : 188;
   const top =
-    spaceBelow > 180
-      ? clampNumber(composeRect.top + 42, 12, Math.max(12, window.innerHeight - 220))
-      : clampNumber(composeRect.top - 188, 12, Math.max(12, window.innerHeight - 220));
-  const left = clampNumber(composeRect.right - width, 12, Math.max(12, window.innerWidth - width - 12));
+    composeRect.height > overlayHeight + 20
+      ? clampNumber(composeRect.bottom - overlayHeight - 10, 12, Math.max(12, window.innerHeight - overlayHeight - 12))
+      : clampNumber(composeRect.top - overlayHeight - 10, 12, Math.max(12, window.innerHeight - overlayHeight - 12));
+  const left = clampNumber(composeRect.left + 8, 12, Math.max(12, window.innerWidth - width - 12));
 
-  return { top, left };
+  return { top, left, width };
 }
 
 function sanitizeContext(detected) {

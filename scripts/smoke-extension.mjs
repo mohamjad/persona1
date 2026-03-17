@@ -136,11 +136,38 @@ async function runScenario(input) {
     return Boolean(root?.querySelector('[data-p1-branch-card="true"]'));
   }, { timeout: 60000 });
 
+  const overlayPlacement = await page.evaluate((selector) => {
+    const compose = document.querySelector(selector);
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    const hud = root?.querySelector('[data-p1-hud="true"]');
+    if (!compose || !hud) {
+      return null;
+    }
+
+    const composeRect = compose.getBoundingClientRect();
+    const hudRect = hud.getBoundingClientRect();
+    return {
+      composeLeft: composeRect.left,
+      composeRight: composeRect.right,
+      composeTop: composeRect.top,
+      composeBottom: composeRect.bottom,
+      hudLeft: hudRect.left,
+      hudRight: hudRect.right,
+      hudTop: hudRect.top,
+      hudBottom: hudRect.bottom
+    };
+  }, input.composeSelector);
+
+  assert.ok(overlayPlacement);
+  assert.ok(overlayPlacement.hudLeft >= overlayPlacement.composeLeft - 16);
+  assert.ok(overlayPlacement.hudRight <= overlayPlacement.composeRight + 16);
+
   const panelText = await page.evaluate(() => {
     const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
     return root?.querySelector('[data-p1-hud="true"]')?.innerText || "";
   });
 
+  assert.match(panelText, /likely outcome:/i);
   assert.match(panelText, /recommended|option 2|option 3|playable move|interesting move|weak move|drifts, no frame/i);
   assert.doesNotMatch(panelText, /cold start/i);
 

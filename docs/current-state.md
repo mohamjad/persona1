@@ -51,6 +51,7 @@ Extension capabilities now implemented:
 - compact branch bloom rendering anchored directly to the active compose box
 - circular move icon anchored directly to the draft surface
 - closed-state launcher hides while the branch bloom is open and can be dragged or dismissed
+- each branch card leads with the likely outcome and stays inside the compose surface footprint
 - keyboard-first analysis with `Ctrl/Cmd+Shift+Space`
 - chess-style draft annotations and branch annotations
 - option insertion into the active compose box
