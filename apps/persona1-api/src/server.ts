@@ -135,7 +135,9 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
         });
         const analyzed = await options.analyzer.analyze(input);
         const output = AnalyzeResponseSchema.parse(analyzed);
-        await options.config.repository.incrementUsage(user.userId, context.now());
+        if (!input.prefetch) {
+          await options.config.repository.incrementUsage(user.userId, context.now());
+        }
         sendJson(response, 200, output);
         return;
       }

@@ -1,6 +1,8 @@
 import { MESSAGE_TYPES, COMMAND_TYPES } from "./lib/messages.js";
 import { analyzeConversation, checkout, registerUser, syncPersona, updatePersona } from "./lib/api-client.js";
 import { appendInteractionLog, appendObservationQueue } from "./lib/observation-log.js";
+import { buildBranchCacheKey, buildSessionFingerprint } from "./lib/analysis-cache.js";
+import { getBranchCache, getScoringConfig, putBranchCache, putScoringConfig } from "./lib/db.js";
 import {
   getExtensionState,
   incrementUsageCount,
@@ -10,6 +12,10 @@ import {
   setColdStartContext,
   storePersonaProfile
 } from "./lib/persona-store.js";
+import { getBridgePageSnapshot, registerBackgroundHandler, sendBridgeCommandToTab } from "./lib/background-bridge.js";
+
+const PREFETCH_TTL_MS = 5 * 60 * 1000;
+const prefetchJobs = new Map();
 
 chrome.runtime.onInstalled.addListener(async () => {
   await initializeDefaults();
@@ -30,40 +36,84 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  void handleMessage(message, sender)
+  void handleLegacyMessage(message, sender)
     .then((result) => sendResponse(result))
-    .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : "Unknown extension error." }));
+    .catch((error) =>
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown extension error."
+      })
+    );
   return true;
 });
 
-async function handleMessage(message, sender) {
+registerBackgroundHandler(MESSAGE_TYPES.getExtensionState, async () => ({
+  ok: true,
+  state: await getExtensionState()
+}));
+
+registerBackgroundHandler(MESSAGE_TYPES.setColdStartContext, async ({ coldStartContext }) => {
+  const result = await setColdStartContext(coldStartContext);
+  return {
+    ok: true,
+    ...result
+  };
+});
+
+registerBackgroundHandler(MESSAGE_TYPES.getUsageState, async () => {
+  const state = await getExtensionState();
+  return {
+    ok: true,
+    usageCount: state.usageCount,
+    plan: state.plan
+  };
+});
+
+registerBackgroundHandler(MESSAGE_TYPES.analyzeConversation, async (payload) => handleAnalyzeRequest(payload));
+registerBackgroundHandler(MESSAGE_TYPES.prefetchConversation, async (payload) =>
+  handleAnalyzeRequest(payload, { prefetch: true })
+);
+
+registerBackgroundHandler(MESSAGE_TYPES.recordOptionSelection, async (payload) => {
+  await appendInteractionLog({
+    ...payload,
+    recordedAt: new Date().toISOString(),
+    type: "option_selected"
+  });
+  await appendObservationQueue({
+    ...payload,
+    recordedAt: new Date().toISOString()
+  });
+  return { ok: true };
+});
+
+registerBackgroundHandler(MESSAGE_TYPES.recordOutcome, async (payload) => handleOutcomeRequest(payload));
+
+registerBackgroundHandler(MESSAGE_TYPES.startCheckout, async (payload) => handleCheckoutRequest(payload));
+
+registerBackgroundHandler(MESSAGE_TYPES.sidebarCommand, async (payload) => {
+  const targetTabId = await getActiveTabId();
+  if (payload.command === COMMAND_TYPES.toggleSidebar) {
+    return toggleEmbeddedPanel(targetTabId);
+  }
+  return sendWorkspaceCommand(targetTabId, payload.command);
+});
+
+async function handleLegacyMessage(message, sender) {
   switch (message?.type) {
     case MESSAGE_TYPES.getExtensionState:
+      return { ok: true, state: await getExtensionState() };
+    case MESSAGE_TYPES.setColdStartContext:
       return {
         ok: true,
-        state: await getExtensionState()
+        ...(await setColdStartContext(message.coldStartContext))
       };
-
-    case MESSAGE_TYPES.setColdStartContext: {
-      const result = await setColdStartContext(message.coldStartContext);
-      return {
-        ok: true,
-        ...result
-      };
-    }
-
     case MESSAGE_TYPES.getUsageState: {
       const state = await getExtensionState();
-      return {
-        ok: true,
-        usageCount: state.usageCount,
-        plan: state.plan
-      };
+      return { ok: true, usageCount: state.usageCount, plan: state.plan };
     }
-
     case MESSAGE_TYPES.analyzeConversation:
-      return handleAnalyzeRequest(message);
-
+      return handleAnalyzeRequest(message.payload);
     case MESSAGE_TYPES.recordOptionSelection:
       await appendInteractionLog({
         ...message.payload,
@@ -75,35 +125,27 @@ async function handleMessage(message, sender) {
         recordedAt: new Date().toISOString()
       });
       return { ok: true };
-
     case MESSAGE_TYPES.recordOutcome:
       return handleOutcomeRequest(message.payload);
-
     case MESSAGE_TYPES.startCheckout:
       return handleCheckoutRequest(message.payload);
-
-    case MESSAGE_TYPES.sidebarCommand:
+    case MESSAGE_TYPES.sidebarCommand: {
+      const targetTabId = sender.tab?.id ?? (await getActiveTabId());
       if (message.command === COMMAND_TYPES.toggleSidebar) {
-        const targetTabId = sender.tab?.id ?? (await getActiveTabId());
-        await toggleEmbeddedPanel(targetTabId);
-        return { ok: true };
+        return toggleEmbeddedPanel(targetTabId);
       }
-
-      await sendWorkspaceCommand(sender.tab?.id ?? (await getActiveTabId()), message.command);
-      return { ok: true };
-
+      return sendWorkspaceCommand(targetTabId, message.command);
+    }
     default:
-      return {
-        ok: false,
-        error: "Unknown message type."
-      };
+      return { ok: false, error: "Unknown message type." };
   }
 }
 
-async function handleAnalyzeRequest(message) {
+async function handleAnalyzeRequest(payload, options = {}) {
+  const prefetch = Boolean(options.prefetch);
   let state = await getExtensionState();
   if (!state.onboardingDone || !state.coldStartContext || !state.persona) {
-    const inferredColdStart = inferColdStartContext(message.payload.context);
+    const inferredColdStart = inferColdStartContext(payload.context);
     const bootstrap = await setColdStartContext(inferredColdStart);
     state = {
       ...(await getExtensionState()),
@@ -114,21 +156,102 @@ async function handleAnalyzeRequest(message) {
     };
   }
 
-  const analysis = await analyzeConversation({
-    draft: message.payload.draft,
-    preset: message.payload.preset,
+  const sessionFingerprint = buildSessionFingerprint({
     userId: state.userId,
-    context: message.payload.context,
+    preset: payload.preset,
+    coldStartContext: state.coldStartContext,
+    personaVersion: state.persona?.version,
+    context: payload.context
+  });
+  const cacheKey = buildBranchCacheKey({
+    sessionFingerprint,
+    draft: payload.draft
+  });
+
+  const cached = await getBranchCache(cacheKey);
+  if (cached?.analysis) {
+    if (!prefetch) {
+      state = {
+        ...state,
+        usageCount: await incrementUsageCount()
+      };
+    }
+    if (cached.analysis.scoringSessionKey && cached.scoringConfig) {
+      await putScoringConfig(cached.analysis.scoringSessionKey, cached.scoringConfig);
+    }
+    return {
+      ok: true,
+      analysis: cached.analysis,
+      usageCount: state.usageCount,
+      cached: true
+    };
+  }
+
+  if (prefetch && prefetchJobs.has(cacheKey)) {
+    return prefetchJobs.get(cacheKey);
+  }
+  if (!prefetch && prefetchJobs.has(cacheKey)) {
+    const analysis = await prefetchJobs.get(cacheKey);
+    return {
+      ok: true,
+      analysis,
+      usageCount: await incrementUsageCount(),
+      cached: true,
+      prefetched: true
+    };
+  }
+
+  const requestPayload = {
+    draft: payload.draft,
+    preset: payload.preset,
+    userId: state.userId,
+    context: payload.context,
+    prefetch,
     coldStartContext: state.coldStartContext,
     personaProfile: state.persona
-  });
-  const usageCount = await incrementUsageCount();
-
-  return {
-    ok: true,
-    analysis,
-    usageCount
   };
+
+  const runAnalyze = async () => {
+    const analysis = await analyzeConversation(requestPayload);
+    const scoringConfig =
+      analysis.scoringConfig ||
+      (analysis.scoringSessionKey ? await getScoringConfig(analysis.scoringSessionKey) : null);
+    await putBranchCache(
+      cacheKey,
+      {
+        analysis,
+        scoringConfig,
+        sessionFingerprint,
+        cachedAt: new Date().toISOString()
+      },
+      PREFETCH_TTL_MS
+    );
+    if (analysis.scoringSessionKey && scoringConfig) {
+      await putScoringConfig(analysis.scoringSessionKey, scoringConfig);
+    }
+    return analysis;
+  };
+
+  const job = runAnalyze();
+  if (prefetch) {
+    prefetchJobs.set(cacheKey, job);
+  }
+
+  try {
+    const analysis = await job;
+    const usageCount = prefetch ? state.usageCount : await incrementUsageCount();
+    return {
+      ok: true,
+      analysis,
+      usageCount,
+      cached: false,
+      prefetched: prefetch
+    };
+  } finally {
+    if (prefetch) {
+      prefetchJobs.delete(cacheKey);
+    }
+  }
 }
 
 function inferColdStartContext(context) {
@@ -198,7 +321,7 @@ async function handleCheckoutRequest(payload) {
   const state = await getExtensionState();
   let userId = state.userId;
   let authToken = state.authToken;
-  let email = payload.email;
+  const email = payload.email;
 
   if (!authToken || !userId) {
     if (!email) {
@@ -250,17 +373,21 @@ async function toggleEmbeddedPanel(tabId) {
     return ensured;
   }
 
-  const response = await chrome.tabs.sendMessage(tabId, {
-    type: "persona1:toggle-embedded-panel"
-  }).catch((error) => ({
-    ok: false,
-    error: error instanceof Error ? error.message : "Could not open the workspace on this tab."
-  }));
-
-  return response || {
-    ok: false,
-    error: "The workspace did not respond."
-  };
+  try {
+    return await sendBridgeCommandToTab(tabId, MESSAGE_TYPES.sidebarCommand, {
+      command: COMMAND_TYPES.toggleSidebar
+    });
+  } catch (error) {
+    return chrome.tabs
+      .sendMessage(tabId, {
+        type: MESSAGE_TYPES.sidebarCommand,
+        command: COMMAND_TYPES.toggleSidebar
+      })
+      .catch(() => ({
+        ok: false,
+        error: error instanceof Error ? error.message : "Could not open the workspace on this tab."
+      }));
+  }
 }
 
 async function sendWorkspaceCommand(tabId, command) {
@@ -273,15 +400,14 @@ async function sendWorkspaceCommand(tabId, command) {
     return ensured;
   }
 
-  const response = await chrome.tabs.sendMessage(tabId, {
-    type: "persona1:workspace-command",
-    command
-  }).catch((error) => ({
-    ok: false,
-    error: error instanceof Error ? error.message : "Could not send the workspace command."
-  }));
-
-  return response || { ok: true };
+  try {
+    return await sendBridgeCommandToTab(tabId, MESSAGE_TYPES.sidebarCommand, { command });
+  } catch (error) {
+    return chrome.tabs.sendMessage(tabId, { type: MESSAGE_TYPES.sidebarCommand, command }).catch(() => ({
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not send the workspace command."
+    }));
+  }
 }
 
 async function getActiveTabId() {
@@ -305,12 +431,16 @@ async function ensureWorkspaceRuntime(tabId) {
     };
   }
 
-  const existing = await chrome.tabs
-    .sendMessage(tab.id, {
-      type: MESSAGE_TYPES.getPageSnapshot
-    })
+  const existing = await getBridgePageSnapshot(tab.id)
     .then(() => ({ ok: true }))
-    .catch(() => null);
+    .catch(async () =>
+      chrome.tabs
+        .sendMessage(tab.id, {
+          type: MESSAGE_TYPES.getPageSnapshot
+        })
+        .then(() => ({ ok: true }))
+        .catch(() => null)
+    );
 
   if (existing?.ok) {
     return existing;
@@ -321,17 +451,19 @@ async function ensureWorkspaceRuntime(tabId) {
     files: ["content-script.js"]
   }).catch(() => null);
 
-  const retried = await chrome.tabs
-    .sendMessage(tab.id, {
-      type: MESSAGE_TYPES.getPageSnapshot
-    })
+  return getBridgePageSnapshot(tab.id)
     .then(() => ({ ok: true }))
-    .catch(() => ({
-      ok: false,
-      error: "The workspace could not attach to this tab. Refresh the page once and try again."
-    }));
-
-  return retried;
+    .catch(async () =>
+      chrome.tabs
+        .sendMessage(tab.id, {
+          type: MESSAGE_TYPES.getPageSnapshot
+        })
+        .then(() => ({ ok: true }))
+        .catch(() => ({
+          ok: false,
+          error: "The workspace could not attach to this tab. Refresh the page once and try again."
+        }))
+    );
 }
 
 function isRestrictedUrl(url) {

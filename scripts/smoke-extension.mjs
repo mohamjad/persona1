@@ -58,8 +58,9 @@ let apiProcess;
 let apiServer;
 let context;
 let apiBaseUrl;
+let mockStats = null;
 try {
-  ({ apiProcess, apiServer, apiBaseUrl } = await ensureApiReady());
+  ({ apiProcess, apiServer, apiBaseUrl, stats: mockStats } = await ensureApiReady());
   context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
     args: [
@@ -108,6 +109,12 @@ try {
 async function runScenario(input) {
   const page = await input.context.newPage();
   await page.goto(input.url, { waitUntil: "domcontentloaded" });
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    document.body?.focus?.();
+  });
   await page.locator(input.composeSelector).click();
 
   const beforeInsert = await page.evaluate(input.readDraft);
@@ -115,6 +122,24 @@ async function runScenario(input) {
     const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
     return Boolean(root?.querySelector('[data-p1-launcher="true"]'));
   });
+  await page.mouse.click(20, 20);
+  await page.waitForFunction(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return !root?.querySelector('[data-p1-launcher="true"]');
+  });
+  await page.locator(input.composeSelector).click();
+  await page.waitForFunction(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return Boolean(root?.querySelector('[data-p1-launcher="true"]'));
+  });
+  const launcherBadge = await page.evaluate(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return root?.querySelector('[data-p1-launcher="true"] [data-p1-badge="true"]')?.textContent?.trim() || "";
+  });
+  assert.notEqual(launcherBadge, "");
+
+  const analyzeCallsBeforeOpen = mockStats?.analyzeCalls ?? null;
+  await page.waitForTimeout(1100);
 
   if (input.openMode === "click") {
     await page.evaluate(() => {
@@ -139,6 +164,10 @@ async function runScenario(input) {
     const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
     return Boolean(root?.querySelector('[data-p1-orb="true"]'));
   }, { timeout: 60000 });
+  if (mockStats && analyzeCallsBeforeOpen !== null) {
+    assert.ok(mockStats.analyzeCalls >= analyzeCallsBeforeOpen + 1);
+    assert.ok(mockStats.analyzeCalls <= analyzeCallsBeforeOpen + 2);
+  }
 
   const initialHudText = await page.evaluate(() => {
     const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
@@ -306,6 +335,9 @@ async function configureExtensionForSmoke(context, apiBaseUrl) {
 }
 
 function startMockApi() {
+  const stats = {
+    analyzeCalls: 0
+  };
   const mockServer = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/v1/health") {
       response.writeHead(200, { "content-type": "application/json" });
@@ -319,6 +351,7 @@ function startMockApi() {
     }
 
     if (request.method === "POST" && request.url === "/v1/analyze") {
+      stats.analyzeCalls += 1;
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         situationRead: "they want a tighter summary before deciding whether to continue the thread",
@@ -380,6 +413,33 @@ function startMockApi() {
             risk: "can preserve ambiguity instead of resolving it"
           }
         ],
+        scoringSessionKey: "score_mock_linkedin",
+        scoringConfig: {
+          sessionKey: "score_mock_linkedin",
+          primaryGoal: "earn a low-friction next step",
+          toneTarget: "direct and calm",
+          platform: "linkedin",
+          relationshipType: "colleague",
+          recipientSensitivity: 0.8,
+          weights: {
+            genericFollowUpPenalty: -2.9,
+            hedgePenalty: -1.4,
+            ambiguityPenalty: -1.8,
+            clarityQuestionBonus: 1.9,
+            concreteChoiceBonus: 1.8,
+            nextStepBonus: 1.5,
+            overlongPenalty: -1.5,
+            warmthBonus: 0.3,
+            pressurePenalty: -1.6
+          },
+          thresholds: {
+            brilliant: 3.8,
+            good: 2.2,
+            interesting: 0.9,
+            dubious: -0.3,
+            weak: -1.3
+          }
+        },
         personaVersionUsed: 1,
         provider: "mock",
         model: "mock-branch-engine"
@@ -398,7 +458,8 @@ function startMockApi() {
       resolve({
         apiProcess: null,
         apiServer: mockServer,
-        apiBaseUrl: `http://127.0.0.1:${address.port}`
+        apiBaseUrl: `http://127.0.0.1:${address.port}`,
+        stats
       });
     });
   });

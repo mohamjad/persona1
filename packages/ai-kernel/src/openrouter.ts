@@ -20,6 +20,7 @@ import {
 } from "./prompt.js";
 import { parseBranchTreeOutput, parseJsonContract } from "./parser.js";
 import { createBootstrapPersonaProfile } from "../../../packages/persona-engine/src/index.js";
+import { buildScoringConfig, evaluateDraftWithConfig } from "../../scoring-engine/src/index.js";
 
 type FetchLike = typeof fetch;
 
@@ -64,12 +65,24 @@ export function createOpenRouterConversationAnalyzer(
         createBootstrapPersonaProfile({
           coldStartContext: input.coldStartContext ?? "general"
         });
+      const scoringConfig = buildScoringConfig({
+        draft: input.draft,
+        context: input.context,
+        personaProfile,
+        preset: input.preset
+      });
+      const draftScore = await evaluateDraftWithConfig({
+        draft: input.draft,
+        config: scoringConfig
+      });
 
       const prompt = buildBranchGeneratorPrompt({
         draft: input.draft,
         preset: input.preset,
         context: input.context,
         personaProfile,
+        scoringConfig,
+        draftScore,
         ...(options.voicePackId !== undefined ? { voicePackId: options.voicePackId } : {}),
         ...(options.voicePackText !== undefined ? { voicePackText: options.voicePackText } : {})
       });
@@ -107,6 +120,8 @@ export function createOpenRouterConversationAnalyzer(
       const branchTree: BranchTree = parseBranchTreeOutput(content);
       return createAnalyzeResponse({
         branchTree,
+        scoringConfig,
+        draftAssessmentOverride: draftScore,
         personaVersionUsed: personaProfile.version,
         model
       });

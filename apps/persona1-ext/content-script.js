@@ -28,10 +28,15 @@ const state = {
   currentContext: null,
   currentComposeTarget: null,
   extensionState: null,
+  bridgeApi: null,
+  runtimeModulesReady: null,
   shadowHost: null,
   shellRoot: null,
   autoAnimate: null,
   autoAnimateController: null,
+  motionAnimate: null,
+  floatingUi: null,
+  hotkeysCleanup: null,
   hudOpen: false,
   observer: null,
   refreshTimer: null,
@@ -53,6 +58,8 @@ const state = {
   dragStartY: 0,
   dragInitialOffsetX: 0,
   dragInitialOffsetY: 0,
+  prefetchTimer: null,
+  lastPrefetchSignature: null,
   lastComposeSignature: null,
   lastRenderMarkup: "",
   lastContextSignature: null
@@ -60,18 +67,6 @@ const state = {
 
 if (!alreadyLoaded) {
   bootContentScript();
-
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    void onMessage(message)
-      .then((result) => sendResponse(result))
-      .catch((error) =>
-        sendResponse({
-          ok: false,
-          error: error instanceof Error ? error.message : "Content script error."
-        })
-      );
-    return true;
-  });
 } else {
   try {
     globalThis.__persona1RefreshContext?.();
@@ -88,13 +83,12 @@ function bootContentScript() {
 }
 
 function start() {
-  void loadMotionLibrary();
+  void ensureRuntimeModules();
   refreshContext();
   installObserver();
   window.addEventListener("focusin", refreshContext, true);
   window.addEventListener("click", refreshContext, true);
   window.addEventListener("input", onInputEvent, true);
-  window.addEventListener("keydown", onGlobalKeydown, true);
   window.addEventListener("pointermove", onGlobalPointerMove, true);
   window.addEventListener("pointerup", onGlobalPointerUp, true);
   window.addEventListener("resize", renderUi, true);
@@ -102,54 +96,108 @@ function start() {
   state.refreshTimer = window.setInterval(refreshContext, 1200);
 }
 
-async function loadMotionLibrary() {
-  if (state.autoAnimate) {
-    return state.autoAnimate;
+async function ensureRuntimeModules() {
+  if (state.runtimeModulesReady) {
+    return state.runtimeModulesReady;
   }
 
-  try {
-    const module = await import(chrome.runtime.getURL("vendor/auto-animate.mjs"));
-    state.autoAnimate = module.autoAnimate || module.default || null;
+  state.runtimeModulesReady = (async () => {
+    const [autoAnimateModule, motionModule, floatingUiModule, tinykeysModule, bridgeModule] = await Promise.all([
+      import(chrome.runtime.getURL("vendor/auto-animate.mjs")).catch(() => null),
+      import(chrome.runtime.getURL("vendor/motion-waapi.mjs")).catch(() => null),
+      import(chrome.runtime.getURL("vendor/floating-ui.dom.mjs")).catch(() => null),
+      import(chrome.runtime.getURL("vendor/tinykeys.mjs")).catch(() => null),
+      import(chrome.runtime.getURL("lib/content-bridge.js"))
+    ]);
+
+    state.autoAnimate = autoAnimateModule?.autoAnimate || autoAnimateModule?.default || null;
+    state.motionAnimate = motionModule?.animateMini || null;
+    state.floatingUi = floatingUiModule || null;
+    state.bridgeApi = bridgeModule;
     attachMotion();
-  } catch {
-    state.autoAnimate = null;
-  }
 
-  return state.autoAnimate;
-}
+    bridgeModule.ensureContentBridge({
+      [MSG.getPageSnapshot]: async () => {
+        refreshContext();
+        return { ok: true, snapshot: snapshotContext() };
+      },
+      [MSG.insertSelectedMessage]: async ({ value }) => {
+        refreshContext();
+        if (!state.currentComposeTarget) {
+          return { ok: false, error: "No active compose target found." };
+        }
+        return { ok: insertComposeValue(state.currentComposeTarget, value) };
+      },
+      [MSG.sidebarCommand]: async ({ command }) => {
+        refreshContext();
+        await handleWorkspaceCommand(command);
+        return { ok: true };
+      }
+    });
 
-async function onMessage(message) {
-  if (message?.type === MSG.getPageSnapshot) {
-    refreshContext();
-    return { ok: true, snapshot: snapshotContext() };
-  }
-
-  if (message?.type === MSG.insertSelectedMessage) {
-    refreshContext();
-    if (!state.currentComposeTarget) {
-      return { ok: false, error: "No active compose target found." };
+    if (tinykeysModule?.tinykeys && !state.hotkeysCleanup) {
+      state.hotkeysCleanup = tinykeysModule.tinykeys(window, {
+        "$mod+Shift+Space": (event) => {
+          if (!isComposeNode(event.target) && !isComposeNode(document.activeElement) && !state.currentComposeTarget) {
+            return;
+          }
+          event.preventDefault();
+          void openHud({
+            analyzeImmediately: true,
+            allowWithoutCompose: false,
+            toggleIfOpen: false
+          });
+        },
+        Escape: (event) => {
+          if (!state.hudOpen) {
+            return;
+          }
+          event.preventDefault();
+          closeHud();
+        },
+        1: (event) => {
+          if (!state.hudOpen || !state.analysis || state.isAnalyzing) {
+            return;
+          }
+          event.preventDefault();
+          void useBranch(1);
+        },
+        2: (event) => {
+          if (!state.hudOpen || !state.analysis || state.isAnalyzing) {
+            return;
+          }
+          event.preventDefault();
+          void useBranch(2);
+        },
+        3: (event) => {
+          if (!state.hudOpen || !state.analysis || state.isAnalyzing) {
+            return;
+          }
+          event.preventDefault();
+          void useBranch(3);
+        }
+      });
     }
 
-    return { ok: insertComposeValue(state.currentComposeTarget, message.value) };
-  }
+    return state.bridgeApi;
+  })();
 
-  if (message?.type === MSG.toggleEmbeddedPanel) {
-    refreshContext();
-    await openHud({
-      analyzeImmediately: false,
-      allowWithoutCompose: true,
-      toggleIfOpen: true
+  return state.runtimeModulesReady;
+}
+
+async function sendBackgroundMessage(type, payload = {}) {
+  try {
+    const bridge = await ensureRuntimeModules();
+    return await Promise.race([
+      bridge.sendContentMessage(type, payload),
+      new Promise((_, reject) => window.setTimeout(() => reject(new Error("bridge_timeout")), 700))
+    ]);
+  } catch {
+    return chrome.runtime.sendMessage({
+      type,
+      ...(payload && typeof payload === "object" ? { payload } : {})
     });
-    return { ok: true, open: state.hudOpen };
   }
-
-  if (message?.type === MSG.workspaceCommand) {
-    refreshContext();
-    await handleWorkspaceCommand(message.command);
-    return { ok: true };
-  }
-
-  return { ok: false, error: "Unknown content message." };
 }
 
 async function handleWorkspaceCommand(command) {
@@ -187,6 +235,7 @@ function onInputEvent(event) {
   }
 
   refreshContext();
+  schedulePrefetch();
   if (state.hudOpen) {
     state.lastDraft = normalizeComposeValue(state.currentComposeTarget);
     renderUi();
@@ -242,8 +291,13 @@ async function onGlobalKeydown(event) {
 
 function refreshContext() {
   const detected = detectComposeContext(document);
-  state.currentComposeTarget = detected?.composeNode || null;
-  state.currentContext = detected ? sanitizeContext(detected) : null;
+  if (detected) {
+    state.currentComposeTarget = detected.composeNode || null;
+    state.currentContext = sanitizeContext(detected);
+  } else if (!state.hudOpen) {
+    state.currentComposeTarget = null;
+    state.currentContext = null;
+  }
   state.lastDraft = normalizeComposeValue(state.currentComposeTarget);
   const nextContextSignature = state.currentContext ? buildContextSignature(state.currentContext, state.lastDraft) : null;
   const nextSignature = state.currentComposeTarget ? getComposeSignature(state.currentComposeTarget) : null;
@@ -256,7 +310,58 @@ function refreshContext() {
     state.launcherDragMoved = false;
   }
   state.lastContextSignature = nextContextSignature;
+  if (state.currentContext && state.currentComposeTarget) {
+    schedulePrefetch();
+  } else if (state.prefetchTimer) {
+    window.clearTimeout(state.prefetchTimer);
+    state.prefetchTimer = null;
+  }
   renderUi();
+}
+
+function schedulePrefetch() {
+  if (state.prefetchTimer) {
+    window.clearTimeout(state.prefetchTimer);
+    state.prefetchTimer = null;
+  }
+
+  const draft = normalizeComposeValue(state.currentComposeTarget).trim();
+  const heuristic = evaluateDraftHeuristically(draft, state.currentContext);
+  if (!state.currentContext || !state.currentComposeTarget || heuristic.annotation === "-") {
+    state.lastPrefetchSignature = null;
+    return;
+  }
+
+  const nextSignature = buildContextSignature(state.currentContext, draft);
+  if (nextSignature === state.lastPrefetchSignature) {
+    return;
+  }
+
+  state.prefetchTimer = window.setTimeout(() => {
+    state.prefetchTimer = null;
+    state.lastPrefetchSignature = nextSignature;
+    void prefetchCurrentDraft();
+  }, 800);
+}
+
+async function prefetchCurrentDraft() {
+  await loadExtensionState();
+  const draft = normalizeComposeValue(state.currentComposeTarget).trim();
+  if (!draft || !state.currentContext) {
+    return;
+  }
+
+  const heuristic = evaluateDraftHeuristically(draft, state.currentContext);
+  if (heuristic.annotation === "-") {
+    return;
+  }
+
+  const preset = inferPreset(state.currentContext, draft, state.extensionState?.coldStartContext || "general");
+  await sendBackgroundMessage(MSG.prefetchConversation, {
+    draft,
+    preset,
+    context: toRecipientContext(state.currentContext)
+  }).catch(() => null);
 }
 
 globalThis.__persona1RefreshContext = refreshContext;
@@ -317,7 +422,7 @@ async function loadExtensionState() {
     return state.extensionState;
   }
 
-  const response = await chrome.runtime.sendMessage({ type: MSG.getExtensionState });
+  const response = await sendBackgroundMessage(MSG.getExtensionState);
   if (!response?.ok) {
     throw new Error(response?.error || "Could not load extension state.");
   }
@@ -387,13 +492,10 @@ async function analyzeCurrentDraft() {
   renderUi();
 
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: MSG.analyzeConversation,
-      payload: {
-        draft,
-        preset: state.activePreset,
-        context: toRecipientContext(state.currentContext)
-      }
+    const response = await sendBackgroundMessage(MSG.analyzeConversation, {
+      draft,
+      preset: state.activePreset,
+      context: toRecipientContext(state.currentContext)
     });
 
     if (!response?.ok) {
@@ -443,10 +545,10 @@ async function useBranch(optionId) {
 
   renderUi();
 
-  await chrome.runtime.sendMessage({
-    type: MSG.recordOptionSelection,
-    payload: interactionPayload(branch, "unknown", branch.isRecommended ? ["trusted_recommended_branch"] : [])
-  });
+  await sendBackgroundMessage(
+    MSG.recordOptionSelection,
+    interactionPayload(branch, "unknown", branch.isRecommended ? ["trusted_recommended_branch"] : [])
+  );
 }
 
 async function copyBranch(optionId) {
@@ -470,14 +572,14 @@ async function recordOutcome(outcome) {
     return;
   }
 
-  const response = await chrome.runtime.sendMessage({
-    type: MSG.recordOutcome,
-    payload: interactionPayload(
+  const response = await sendBackgroundMessage(
+    MSG.recordOutcome,
+    interactionPayload(
       state.lastAppliedBranch,
       outcome,
       state.lastAppliedBranch.isRecommended ? ["trusted_recommended_branch"] : []
     )
-  });
+  );
 
   if (!response?.ok) {
     state.error = response?.error || "could not record the outcome.";
@@ -512,7 +614,7 @@ function interactionPayload(branch, outcome, observedSignals) {
 }
 
 function renderUi() {
-  const shouldRender = Boolean(state.currentContext?.composeDetected || state.hudOpen);
+  const shouldRender = Boolean((state.currentContext?.composeDetected && hasFocusedComposeTarget()) || state.hudOpen);
   if (!shouldRender) {
     teardownRoot();
     return;
@@ -523,12 +625,16 @@ function renderUi() {
   }
 
   const nextMarkup = `${buildLauncherMarkup()}${state.hudOpen ? buildHudMarkup() : ""}`;
-  if (nextMarkup === state.lastRenderMarkup) {
-    return;
+  const markupChanged = nextMarkup !== state.lastRenderMarkup;
+  if (markupChanged) {
+    state.lastRenderMarkup = nextMarkup;
+    state.shellRoot.innerHTML = nextMarkup;
+    attachMotion();
   }
-
-  state.lastRenderMarkup = nextMarkup;
-  state.shellRoot.innerHTML = nextMarkup;
+  void positionFloatingElements();
+  if (markupChanged) {
+    animateFloatingState();
+  }
 }
 
 function ensureRoot() {
@@ -559,6 +665,7 @@ function ensureRoot() {
     [data-p1-badge-tone="good"] { background: #163a2d; color: #effff8; }
     [data-p1-badge-tone="risky"] { background: #6a241a; color: #fff6f2; }
     [data-p1-badge-tone="neutral"] { background: #5d4a20; color: #fff8e8; }
+    [data-p1-badge-tone="muted"] { background: #6b655c; color: #faf6ef; }
     [data-p1-hud="true"] { position: fixed; pointer-events: auto; display: flex; flex-direction: column; gap: 6px; }
     [data-p1-hud-head="true"] { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 0 2px; }
     [data-p1-hud-close="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: rgba(255, 251, 244, 0.98); color: #5f5549; border-radius: 999px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font: 700 12px/1 ui-sans-serif, system-ui, sans-serif; }
@@ -753,17 +860,20 @@ function onGlobalPointerUp() {
 }
 
 function buildLauncherMarkup() {
-  if (!state.currentContext?.composeDetected || !state.currentComposeTarget || state.hudOpen || state.launcherDismissed) {
+  if (
+    !state.currentContext?.composeDetected ||
+    !state.currentComposeTarget ||
+    !hasFocusedComposeTarget() ||
+    state.hudOpen ||
+    state.launcherDismissed
+  ) {
     return "";
   }
 
-  const rect = clampRect(state.currentComposeTarget.getBoundingClientRect());
   const heuristic = evaluateDraftHeuristically(state.lastDraft, state.currentContext);
-  const top = clampNumber(rect.top + 10 + state.launcherOffsetY, 12, window.innerHeight - 54);
-  const left = clampNumber(rect.right - 46 + state.launcherOffsetX, 12, Math.max(12, window.innerWidth - 54));
 
   return `
-    <div data-p1-launcher-wrap="true" style="top:${top}px;left:${left}px;">
+    <div data-p1-launcher-wrap="true">
       <button
         type="button"
         data-p1-launcher="true"
@@ -785,7 +895,6 @@ function buildLauncherMarkup() {
 }
 
 function buildHudMarkup() {
-  const layout = computeHudLayout();
   const context = state.currentContext;
   const draftAssessment = state.analysis?.draftAssessment || evaluateDraftHeuristically(state.lastDraft, context);
   const activeBranch = selectedBranch();
@@ -805,7 +914,7 @@ function buildHudMarkup() {
         : `<div data-p1-inline-note="true">${escapeHtml(draftAssessment.label)}</div>`;
 
   return `
-    <section data-p1-hud="true" style="top:${layout.top}px;left:${layout.left}px;width:${layout.width}px;">
+    <section data-p1-hud="true">
       <div data-p1-hud-head="true">
         <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(draftAssessment.annotation)}">${escapeHtml(draftAssessment.annotation)}</span>
         <button type="button" data-p1-hud-close="true" data-p1-action="close-hud" aria-label="Close move tree">x</button>
@@ -902,6 +1011,75 @@ function computeHudLayout() {
   return { top, left, width };
 }
 
+async function positionFloatingElements() {
+  const shellRoot = state.shellRoot;
+  if (!shellRoot) {
+    return;
+  }
+
+  const launcher = shellRoot.querySelector("[data-p1-launcher-wrap='true']");
+  if (launcher && state.currentComposeTarget) {
+    const rect = clampRect(state.currentComposeTarget.getBoundingClientRect());
+    const top = clampNumber(rect.top + 10 + state.launcherOffsetY, 12, window.innerHeight - 54);
+    const left = clampNumber(rect.right - 46 + state.launcherOffsetX, 12, Math.max(12, window.innerWidth - 54));
+    launcher.style.top = `${top}px`;
+    launcher.style.left = `${left}px`;
+  }
+
+  const hud = shellRoot.querySelector("[data-p1-hud='true']");
+  if (hud && state.currentComposeTarget) {
+    const { width } = computeHudLayout();
+    hud.style.width = `${width}px`;
+    if (state.floatingUi?.computePosition) {
+      const { computePosition, offset, shift, flip } = state.floatingUi;
+      const positioned = await computePosition(state.currentComposeTarget, hud, {
+        placement: "top-start",
+        middleware: [offset(10), flip({ padding: 12 }), shift({ padding: 12 })]
+      }).catch(() => null);
+
+      if (positioned) {
+        hud.style.top = `${positioned.y}px`;
+        hud.style.left = `${positioned.x}px`;
+        return;
+      }
+    }
+
+    const fallbackLayout = computeHudLayout();
+    hud.style.top = `${fallbackLayout.top}px`;
+    hud.style.left = `${fallbackLayout.left}px`;
+  }
+}
+
+function animateFloatingState() {
+  if (!state.motionAnimate || !state.shellRoot) {
+    return;
+  }
+
+  const launcher = state.shellRoot.querySelector("[data-p1-launcher-wrap='true']");
+  if (launcher) {
+    state.motionAnimate(
+      launcher,
+      {
+        opacity: [0, 1],
+        transform: ["translateY(6px) scale(0.94)", "translateY(0px) scale(1)"]
+      },
+      { duration: 0.16, easing: "ease-out" }
+    );
+  }
+
+  const hud = state.shellRoot.querySelector("[data-p1-hud='true']");
+  if (hud) {
+    state.motionAnimate(
+      hud,
+      {
+        opacity: [0, 1],
+        transform: ["translateY(8px) scale(0.98)", "translateY(0px) scale(1)"]
+      },
+      { duration: 0.18, easing: "ease-out" }
+    );
+  }
+}
+
 function sanitizeContext(detected) {
   const rawThreadText = String(detected.rawThreadText || detected.threadSummary || "");
   return {
@@ -936,6 +1114,19 @@ function selectedBranch() {
   return state.analysis?.branches?.find((branch) => branch.optionId === optionId) || null;
 }
 
+function hasFocusedComposeTarget() {
+  if (!state.currentComposeTarget) {
+    return false;
+  }
+
+  const active = document.activeElement;
+  if (!active) {
+    return false;
+  }
+
+  return active === state.currentComposeTarget || state.currentComposeTarget.contains(active);
+}
+
 function toRecipientContext(context) {
   return {
     recipientName: context.recipientName || null,
@@ -959,9 +1150,18 @@ function evaluateDraftHeuristically(draft, context) {
   const text = String(draft || "").trim();
   if (!text) {
     return {
-      annotation: "??",
-      label: "no move yet",
-      reason: "there is no draft to evaluate."
+      annotation: "-",
+      label: "not enough board yet",
+      reason: "there is not enough draft text to justify a rational move."
+    };
+  }
+
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  if (text.length < 8 || wordCount < 2) {
+    return {
+      annotation: "-",
+      label: "too early to score",
+      reason: "there is not enough signal in the draft to score the move cleanly."
     };
   }
 
@@ -996,6 +1196,9 @@ function evaluateDraftHeuristically(draft, context) {
 }
 
 function toneForAnnotation(annotation) {
+  if (annotation === "-") {
+    return "muted";
+  }
   if (annotation === "!!" || annotation === "!") {
     return "good";
   }
@@ -1030,12 +1233,34 @@ function detectComposeContext(doc) {
   );
 }
 
+function findFocusedComposeNode(doc, selectors) {
+  const active = doc.activeElement;
+  if (!active) {
+    return null;
+  }
+
+  for (const selector of selectors) {
+    const directMatch = typeof active.matches === "function" && active.matches(selector) ? active : null;
+    if (directMatch && isComposeNode(directMatch)) {
+      return directMatch;
+    }
+
+    const ancestorMatch = typeof active.closest === "function" ? active.closest(selector) : null;
+    if (ancestorMatch && isComposeNode(ancestorMatch)) {
+      return ancestorMatch;
+    }
+  }
+
+  return null;
+}
+
 function extractLinkedInContext(doc) {
   const onLinkedIn = /(^|\.)linkedin\.com$/i.test(window.location.hostname);
-  const composeNode =
-    doc.querySelector(".msg-form__contenteditable[contenteditable='true']") ||
-    doc.querySelector("[contenteditable='true'][role='textbox']") ||
-    doc.querySelector("textarea[name='message']");
+  const composeNode = findFocusedComposeNode(doc, [
+    ".msg-form__contenteditable[contenteditable='true']",
+    "[contenteditable='true'][role='textbox']",
+    "textarea[name='message']"
+  ]);
   if (!onLinkedIn || !composeNode) {
     return null;
   }
@@ -1066,11 +1291,12 @@ function extractLinkedInContext(doc) {
 
 function extractGmailContext(doc) {
   const onGmail = /(^|\.)mail\.google\.com$/i.test(window.location.hostname);
-  const composeNode =
-    doc.querySelector('div[aria-label="Message Body"][contenteditable="true"]') ||
-    doc.querySelector('div[role="textbox"][g_editable="true"]') ||
-    doc.querySelector('div[contenteditable="true"][aria-label*="Message Body"]') ||
-    doc.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"]');
+  const composeNode = findFocusedComposeNode(doc, [
+    'div[aria-label="Message Body"][contenteditable="true"]',
+    'div[role="textbox"][g_editable="true"]',
+    'div[contenteditable="true"][aria-label*="Message Body"]',
+    'div[contenteditable="true"][role="textbox"][aria-multiline="true"]'
+  ]);
   if (!onGmail || !composeNode) {
     return null;
   }
@@ -1102,9 +1328,10 @@ function extractGmailContext(doc) {
 
 function extractTwitterDmContext(doc) {
   const onX = /(^|\.)x\.com$/i.test(window.location.hostname) || /(^|\.)twitter\.com$/i.test(window.location.hostname);
-  const composeNode =
-    doc.querySelector('[data-testid="dmComposerTextInput"][contenteditable="true"]') ||
-    doc.querySelector('[data-testid="dmComposerTextInput"]');
+  const composeNode = findFocusedComposeNode(doc, [
+    '[data-testid="dmComposerTextInput"][contenteditable="true"]',
+    '[data-testid="dmComposerTextInput"]'
+  ]);
   if (!onX || !composeNode) {
     return null;
   }
@@ -1132,9 +1359,10 @@ function extractTwitterDmContext(doc) {
 
 function extractSlackContext(doc) {
   const onSlack = /(^|\.)app\.slack\.com$/i.test(window.location.hostname);
-  const composeNode =
-    doc.querySelector('[data-qa="message_input"] [contenteditable="true"]') ||
-    doc.querySelector('[data-qa="message_input"]');
+  const composeNode = findFocusedComposeNode(doc, [
+    '[data-qa="message_input"] [contenteditable="true"]',
+    '[data-qa="message_input"]'
+  ]);
   if (!onSlack || !composeNode) {
     return null;
   }
@@ -1162,9 +1390,10 @@ function extractSlackContext(doc) {
 
 function extractDatingAppContext(doc) {
   const onDatingApp = /(bumble|hinge|tinder|feeld)/i.test(window.location.hostname);
-  const composeNode =
-    doc.querySelector("textarea") ||
-    doc.querySelector('[contenteditable="true"][role="textbox"]');
+  const composeNode = findFocusedComposeNode(doc, [
+    "textarea",
+    '[contenteditable="true"][role="textbox"]'
+  ]);
   if (!onDatingApp || !composeNode) {
     return null;
   }
@@ -1191,9 +1420,9 @@ function extractDatingAppContext(doc) {
 function extractFallbackContext(doc) {
   const active = doc.activeElement;
   const composeNode =
-    active && (active.tagName === "TEXTAREA" || active.isContentEditable)
+    active && (active.tagName === "TEXTAREA" || active.isContentEditable || (active.tagName === "INPUT" && active.type === "text"))
       ? active
-      : doc.querySelector("textarea, [contenteditable='true'], div[role='textbox']");
+      : null;
   if (!composeNode) {
     return null;
   }

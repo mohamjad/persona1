@@ -5,6 +5,7 @@ import {
   PersonaInteractionSchema,
   PersonaProfileSchema
 } from "../../../packages/persona-engine/src/index.js";
+import { ScoringConfigSchema } from "../../scoring-engine/src/index.js";
 
 export const ConversationPresetSchema = z.enum([
   "date",
@@ -34,12 +35,16 @@ export const RecipientContextSchema = z.object({
   conversationGoalHint: z.string().optional()
 });
 
-export const MoveAnnotationSchema = z.enum(["!!", "!", "!?", "?!", "?", "??"]);
+export const MoveAnnotationSchema = z.enum(["-", "!!", "!", "!?", "?!", "?", "??"]);
 
 export const DraftAssessmentSchema = z.object({
   annotation: MoveAnnotationSchema,
   label: z.string().min(1),
-  reason: z.string().min(1)
+  reason: z.string().min(1),
+  confidence: z.number().min(0).max(1).optional(),
+  matchedRules: z.array(z.string()).optional(),
+  sessionKey: z.string().optional(),
+  score: z.number().optional()
 });
 
 export const BranchOptionSchema = z.object({
@@ -92,6 +97,7 @@ export const AnalyzeRequestSchema = z.object({
   preset: ConversationPresetSchema,
   userId: z.string().min(1),
   context: RecipientContextSchema,
+  prefetch: z.boolean().optional(),
   coldStartContext: ColdStartContextSchema.optional(),
   personaProfile: PersonaProfileSchema.optional()
 });
@@ -103,6 +109,8 @@ export const AnalyzeResponseSchema = z.object({
   primaryGoal: z.string().min(1),
   draftAssessment: DraftAssessmentSchema,
   branches: BranchTreeSchema.shape.branches,
+  scoringSessionKey: z.string().optional(),
+  scoringConfig: ScoringConfigSchema.optional(),
   personaVersionUsed: z.number().int().positive(),
   provider: z.literal("openrouter"),
   model: z.string().min(1)

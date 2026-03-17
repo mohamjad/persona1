@@ -297,6 +297,23 @@ Replace fragile implementation shortcuts with explicit infrastructure.
 - annotation engine runs locally against typed scoring config
 - malformed model output cannot crash the UI
 
+### Current implementation status
+
+In repo now:
+
+- Dexie-backed primary extension state
+- branch cache and scoring-config cache
+- webext-bridge scaffolding in the active hot path with compatibility fallback still present
+- Motion, Floating UI, and tinykeys integrated into the compose-surface orb runtime
+- `packages/scoring-engine` using `json-rules-engine`
+- BAML contract source plus generated TypeScript client artifacts
+- ADR-0002 through ADR-0013 written in `docs/adr`
+
+Remaining before this phase is fully closed:
+
+- remove the legacy raw message fallback from the active path after bridge hardening
+- cut runtime contract parsing from zod-only to generated-client-backed BAML usage where safe
+
 ## Phase 2 - Parameterized Scoring
 
 ### Goal

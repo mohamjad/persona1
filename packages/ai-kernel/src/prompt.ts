@@ -7,6 +7,7 @@ import type {
   RecipientContext
 } from "./contracts.js";
 import type { PersonaInteraction, PersonaProfile } from "../../../packages/persona-engine/src/index.js";
+import type { DraftScoreResult, ScoringConfig } from "../../scoring-engine/src/index.js";
 
 export interface PromptMessage {
   role: "system" | "user";
@@ -23,6 +24,8 @@ export function buildBranchGeneratorPrompt(input: {
   preset: ConversationPreset;
   context: RecipientContext;
   personaProfile: PersonaProfile;
+  scoringConfig?: ScoringConfig | null;
+  draftScore?: DraftScoreResult | null;
   voicePackId?: string | null;
   voicePackText?: string | null;
 }): PromptBundle {
@@ -73,6 +76,8 @@ export function buildBranchGeneratorPrompt(input: {
           `Voice pack instructions:\n${input.voicePackText?.trim() || "No explicit voice pack. Stay close to the persona profile."}`,
           `Sender profile context JSON: ${JSON.stringify(input.personaProfile)}`,
           `Current conversation context JSON: ${JSON.stringify(input.context)}`,
+          `Session scoring config JSON: ${JSON.stringify(input.scoringConfig || null)}`,
+          `Local draft scoring JSON: ${JSON.stringify(input.draftScore || null)}`,
           `Draft: ${input.draft}`
         ].join("\n\n")
       }
@@ -82,16 +87,33 @@ export function buildBranchGeneratorPrompt(input: {
 
 export function createAnalyzeResponse(input: {
   branchTree: BranchTree;
+  scoringConfig?: ScoringConfig | null;
+  draftAssessmentOverride?: DraftScoreResult | null;
   personaVersionUsed: number;
   model: string;
 }) {
+  const draftAssessment = input.draftAssessmentOverride
+    ? {
+        ...input.branchTree.draftAssessment,
+        annotation: input.draftAssessmentOverride.annotation,
+        label: input.draftAssessmentOverride.label,
+        reason: input.draftAssessmentOverride.reason,
+        confidence: input.draftAssessmentOverride.confidence,
+        matchedRules: input.draftAssessmentOverride.matchedRules,
+        sessionKey: input.draftAssessmentOverride.sessionKey,
+        score: input.draftAssessmentOverride.score
+      }
+    : input.branchTree.draftAssessment;
+
   return {
     situationRead: input.branchTree.situationRead,
     contextEvidence: input.branchTree.contextEvidence,
     toneTarget: input.branchTree.toneTarget,
     primaryGoal: input.branchTree.primaryGoal,
-    draftAssessment: input.branchTree.draftAssessment,
+    draftAssessment,
     branches: input.branchTree.branches,
+    scoringSessionKey: input.draftAssessmentOverride?.sessionKey,
+    scoringConfig: input.scoringConfig || undefined,
     personaVersionUsed: input.personaVersionUsed,
     provider: "openrouter" as const,
     model: input.model

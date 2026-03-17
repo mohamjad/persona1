@@ -48,7 +48,17 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["vendor/auto-animate.mjs"],
+      "resources": [
+        "vendor/auto-animate.mjs",
+        "vendor/dexie.mjs",
+        "vendor/floating-ui.dom.mjs",
+        "vendor/tinykeys.mjs",
+        "vendor/motion-waapi.mjs",
+        "vendor/webext-bridge/*.js",
+        "vendor/webext-bridge/deps/*.js",
+        "lib/content-bridge.js",
+        "lib/messages.js"
+      ],
       "matches": ["<all_urls>"]
     }
   ]

@@ -68,9 +68,11 @@ Stages 4 and 5 are async.
 The extension owns:
 
 - compose detection
+- active-compose gating for the launcher
 - DOM extraction
 - compose-surface outcome orb dock attached to the active draft
 - keyboard-first analysis and move application
+- prefetch-triggered branch caching and scoring-session reuse
 - local observation logging
 - local persona storage
 - auth token presence for paid flows
@@ -116,6 +118,8 @@ The extension stores:
 - interaction log
 - observation queue
 - mirror insights
+- branch cache
+- scoring config cache
 - settings
 
 ### Backend State
@@ -143,6 +147,8 @@ The repo currently implements:
 - dating-app extractor
 - fallback extractor
 - compose-surface orb dock with draft annotations, outcome labels, and unfolding preview
+- active-input-only launcher behavior so the move icon does not persist when the draft loses focus
+- explicit low-information `-` state when there is not enough draft signal to justify a scored decision
 - popup settings and fallback controls
 - full preset catalog across date, pitch, negotiate, apologize, reconnect, confront, close, and decline
 - analyze endpoint
@@ -157,6 +163,11 @@ The repo currently implements:
 - local outcome capture
 - local mirror surfacing
 - local communication scorecard
+- Dexie-backed primary extension state with migration from legacy `chrome.storage.local`
+- typed `webext-bridge` messaging scaffolding in the active extension runtime with compatibility fallback during the migration window
+- BAML contract source and generated TypeScript client artifacts for `ContextOutput`, `ScoringConfig`, `AnnotationOutput`, `BranchTree`, `PersonaUpdateOutput`, and `MirrorOutput`
+- deterministic scoring-engine evaluation using `json-rules-engine`
+- session-aware branch caching and scoring-config caching with 800ms typing-debounce prefetch
 - provider-backed persona update and mirror inference with deterministic fallback
 - usage tracking without analyze-time quota enforcement
 - Stripe adapter boundaries
@@ -178,5 +189,6 @@ The code intentionally deviates from the original source spec in one active oper
 
 1. `OpenRouter` is the active inference provider instead of direct Anthropic integration.
 2. The active MVP UI is an injected icon-anchored branch bloom instead of Chrome's native side panel because the inline workflow is more reliable under MV3 gesture restrictions and avoids blocked embedded-extension pages.
+3. Runtime contract parsing is still zod-backed even though BAML contract source and generated clients now exist in-repo. This is an intentional staged cutover so contract source can land without destabilizing the live extension path.
 
 The auth story is no longer a structural deviation because a Firebase-compatible verifier already exists in code. The runtime still defaults to `local_hmac` until Firebase project configuration is supplied.

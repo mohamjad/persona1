@@ -1,34 +1,24 @@
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from "./storage-keys.js";
 import { deriveLocalMirrorInsights } from "./mirror.js";
+import {
+  bulkSetMeta,
+  ensureDbInitialized,
+  getMetaValue,
+  readExtensionStateFromDb,
+  replaceMirrorInsights,
+  setMetaValue
+} from "./db.js";
 
 export async function getExtensionState() {
-  const state = await chrome.storage.local.get(Object.values(STORAGE_KEYS));
-  return {
-    userId: state[STORAGE_KEYS.userId] || null,
-    authToken: state[STORAGE_KEYS.authToken] || null,
-    plan: state[STORAGE_KEYS.plan] || "free",
-    usageCount: Number(state[STORAGE_KEYS.usageCount] || 0),
-    onboardingDone: Boolean(state[STORAGE_KEYS.onboardingDone]),
-    coldStartContext: state[STORAGE_KEYS.coldStartContext] || null,
-    persona: state[STORAGE_KEYS.persona] || null,
-    interactionLog: state[STORAGE_KEYS.interactionLog] || [],
-    observationQueue: state[STORAGE_KEYS.observationQueue] || [],
-    mirrorInsights: state[STORAGE_KEYS.mirrorInsights] || [],
-    settings: {
-      ...DEFAULT_SETTINGS,
-      ...(state[STORAGE_KEYS.settings] || {})
-    }
-  };
+  return readExtensionStateFromDb();
 }
 
 export async function initializeDefaults() {
+  await ensureDbInitialized();
   const state = await getExtensionState();
-  await chrome.storage.local.set({
+  await bulkSetMeta({
     [STORAGE_KEYS.plan]: state.plan,
     [STORAGE_KEYS.usageCount]: state.usageCount,
-    [STORAGE_KEYS.interactionLog]: state.interactionLog,
-    [STORAGE_KEYS.observationQueue]: state.observationQueue,
-    [STORAGE_KEYS.mirrorInsights]: state.mirrorInsights,
     [STORAGE_KEYS.settings]: state.settings
   });
 }
@@ -37,7 +27,7 @@ export async function setColdStartContext(coldStartContext) {
   const persona = createBootstrapPersona(coldStartContext);
   const userId = `local_${crypto.randomUUID?.() || Math.random().toString(16).slice(2)}`;
 
-  await chrome.storage.local.set({
+  await bulkSetMeta({
     [STORAGE_KEYS.userId]: userId,
     [STORAGE_KEYS.coldStartContext]: coldStartContext,
     [STORAGE_KEYS.persona]: persona,
@@ -51,16 +41,13 @@ export async function setColdStartContext(coldStartContext) {
 }
 
 export async function incrementUsageCount() {
-  const state = await getExtensionState();
-  const nextCount = state.usageCount + 1;
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.usageCount]: nextCount
-  });
+  const nextCount = Number((await getMetaValue(STORAGE_KEYS.usageCount, 0)) || 0) + 1;
+  await setMetaValue(STORAGE_KEYS.usageCount, nextCount);
   return nextCount;
 }
 
 export async function setAuthState(input) {
-  await chrome.storage.local.set({
+  await bulkSetMeta({
     [STORAGE_KEYS.userId]: input.userId,
     [STORAGE_KEYS.authToken]: input.authToken,
     [STORAGE_KEYS.plan]: input.plan ?? "free"
@@ -73,16 +60,12 @@ export async function updateSettings(patch) {
     ...state.settings,
     ...patch
   };
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.settings]: nextSettings
-  });
+  await setMetaValue(STORAGE_KEYS.settings, nextSettings);
   return nextSettings;
 }
 
 export async function storePersonaProfile(persona) {
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.persona]: persona
-  });
+  await setMetaValue(STORAGE_KEYS.persona, persona);
   return persona;
 }
 
@@ -136,10 +119,8 @@ export async function recordOutcomeAndUpdatePersona(interaction) {
 
   const mirrorInsights = deriveLocalMirrorInsights([...(state.observationQueue || []), interaction]);
 
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.persona]: nextPersona,
-    [STORAGE_KEYS.mirrorInsights]: mirrorInsights
-  });
+  await setMetaValue(STORAGE_KEYS.persona, nextPersona);
+  await replaceMirrorInsights(mirrorInsights);
 
   return {
     persona: nextPersona,

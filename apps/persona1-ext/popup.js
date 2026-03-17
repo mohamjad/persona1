@@ -1,6 +1,7 @@
 import { MESSAGE_TYPES } from "./lib/messages.js";
 import { COMMAND_TYPES } from "./lib/messages.js";
 import { getExtensionState, updateSettings } from "./lib/persona-store.js";
+import { sendPopupMessage } from "./lib/popup-bridge.js";
 import { deriveCommunicationScorecard, formatScorecardForSharing } from "./lib/scorecard.js";
 
 const statusNode = document.querySelector("#popup-status");
@@ -18,8 +19,7 @@ renderScorecard(state);
 
 document.querySelectorAll("[data-cold-start]").forEach((button) => {
   button.addEventListener("click", async () => {
-    const response = await chrome.runtime.sendMessage({
-      type: MESSAGE_TYPES.setColdStartContext,
+    const response = await sendPopupMessage(MESSAGE_TYPES.setColdStartContext, {
       coldStartContext: button.getAttribute("data-cold-start")
     });
     statusNode.textContent = response.ok
@@ -29,8 +29,7 @@ document.querySelectorAll("[data-cold-start]").forEach((button) => {
 });
 
 openSidePanelButton.addEventListener("click", async () => {
-  const response = await chrome.runtime.sendMessage({
-    type: MESSAGE_TYPES.sidebarCommand,
+  const response = await sendPopupMessage(MESSAGE_TYPES.sidebarCommand, {
     command: COMMAND_TYPES.analyze
   });
   statusNode.textContent = response?.ok

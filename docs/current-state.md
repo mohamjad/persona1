@@ -44,6 +44,7 @@ Implemented now:
 Extension capabilities now implemented:
 
 - automatic cold-start inference on first live analyze
+- active-input-only launcher behavior
 - LinkedIn compose extraction
 - Gmail compose extraction
 - X DM extraction
@@ -52,10 +53,13 @@ Extension capabilities now implemented:
 - fallback extraction
 - compact three-orb dock rendering anchored directly to the active compose box
 - circular move icon anchored directly to the draft surface
+- low-information `-` draft state when there is not enough text to justify a scored move
 - closed-state launcher hides while the branch bloom is open and can be dragged or dismissed
 - each orb represents a different outcome and the preview stays collapsed until the user hovers or selects a line
 - conversation-first context payloads with a live conversation summary, recent visible messages, and a goal hint separate from profile-level tone shaping
 - `@formkit/auto-animate` is used to smooth the dock and preview transitions
+- `motion` and `floating-ui` now back the deliberate open/close and compose anchoring paths
+- `tinykeys` now owns the active hotkey path
 - keyboard-first analysis with `Ctrl/Cmd+Shift+Space`
 - chess-style draft annotations and branch annotations
 - option insertion into the active compose box
@@ -63,11 +67,15 @@ Extension capabilities now implemented:
 - local usage tracking without enforced free-cap blocking
 - local observation logging
 - local persona storage
+- Dexie-backed primary extension storage with branch cache and scoring-config cache
+- branch prefetch after typing debounce with background cache reuse
+- BAML contract source in `baml_src/` and generated TypeScript clients in `baml_client/`
 - local outcome capture
 - local mirror surfacing
 - local communication scorecard
 - provider-backed persona update and mirror response handling for authenticated flows
 - self-contained browser smoke harness for LinkedIn-style, Gmail-style, and fallback compose analysis and branch insertion without depending on a stale external API process
+- scoring-engine package using `json-rules-engine` to score drafts against session-aware scoring configs
 
 ## What Exists Today
 
