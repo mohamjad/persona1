@@ -8,7 +8,7 @@ Current repo status:
 - source-of-truth planning docs created
 - full repo scaffold implemented
 - API implemented
-- Chrome extension implemented with an inline compose HUD as the active MVP surface
+- Chrome extension implemented with an icon-anchored branch bloom as the active MVP surface
 - local-first persona engine implemented
 - billing and usage gate implemented
 - repository adapters implemented
@@ -48,7 +48,7 @@ Extension capabilities now implemented:
 - Slack extraction
 - dating-app extraction
 - fallback extraction
-- compact inline chess tree rendering anchored to the active compose box
+- compact branch bloom rendering anchored directly to the active compose box
 - circular move icon anchored directly to the draft surface
 - keyboard-first analysis with `Ctrl/Cmd+Shift+Space`
 - chess-style draft annotations and branch annotations

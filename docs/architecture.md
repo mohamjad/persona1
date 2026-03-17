@@ -24,7 +24,7 @@ Distribution may be documented in this repo for completeness, but it should not 
 The source spec assumes a world1-style modular layout. In this repo, that target topology should still be preserved:
 
 - `apps/persona1-ext`
-  Chrome extension, Manifest V3, inline compose HUD, content scripts, service worker
+  Chrome extension, Manifest V3, icon-anchored branch bloom UI, content scripts, service worker
 - `apps/persona1-api`
   Cloud Run API, inference endpoints, auth, billing hooks, sync endpoints
 - `packages/ai-kernel`
@@ -69,7 +69,7 @@ The extension owns:
 
 - compose detection
 - DOM extraction
-- inline compose HUD anchored to the active draft
+- icon-anchored branch bloom attached to the active draft
 - keyboard-first analysis and move application
 - local observation logging
 - local persona storage
@@ -142,7 +142,7 @@ The repo currently implements:
 - Slack extractor
 - dating-app extractor
 - fallback extractor
-- inline chess-tree HUD with draft annotations and move labels
+- icon-anchored branch bloom with draft annotations and move labels
 - popup settings and fallback controls
 - full preset catalog across date, pitch, negotiate, apologize, reconnect, confront, close, and decline
 - analyze endpoint
@@ -177,6 +177,6 @@ The repo currently implements:
 The code intentionally deviates from the original source spec in one active operational place:
 
 1. `OpenRouter` is the active inference provider instead of direct Anthropic integration.
-2. The active MVP UI is an injected inline compose HUD instead of Chrome's native side panel because the inline workflow is more reliable under MV3 gesture restrictions and avoids blocked embedded-extension pages.
+2. The active MVP UI is an injected icon-anchored branch bloom instead of Chrome's native side panel because the inline workflow is more reliable under MV3 gesture restrictions and avoids blocked embedded-extension pages.
 
 The auth story is no longer a structural deviation because a Firebase-compatible verifier already exists in code. The runtime still defaults to `local_hmac` until Firebase project configuration is supplied.

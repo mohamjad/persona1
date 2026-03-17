@@ -37,7 +37,6 @@ const state = {
   selectedOptionId: null,
   activePreset: "pitch",
   lastDraft: "",
-  pendingAnalyzeAfterOnboarding: false,
   isAnalyzing: false,
   status: "",
   error: "",
@@ -259,7 +258,6 @@ async function openHud(input = {}) {
 function closeHud() {
   state.hudOpen = false;
   state.isAnalyzing = false;
-  state.pendingAnalyzeAfterOnboarding = false;
   state.status = "";
   state.error = "";
   state.analysis = null;
@@ -353,9 +351,6 @@ async function analyzeCurrentDraft() {
     });
 
     if (!response?.ok) {
-      if (response?.requiresOnboarding) {
-        state.pendingAnalyzeAfterOnboarding = true;
-      }
       state.error = response?.error || "analysis failed.";
       state.status = "";
       state.isAnalyzing = false;
@@ -504,26 +499,26 @@ function ensureRoot() {
     [data-p1-badge-tone="good"] { background: #163a2d; color: #effff8; }
     [data-p1-badge-tone="risky"] { background: #6a241a; color: #fff6f2; }
     [data-p1-badge-tone="neutral"] { background: #5d4a20; color: #fff8e8; }
-    [data-p1-hud="true"] { position: fixed; pointer-events: auto; width: min(420px, calc(100vw - 24px)); border: 1px solid rgba(22, 18, 13, 0.14); background: rgba(255, 252, 246, 0.98); box-shadow: 0 20px 52px rgba(22, 18, 13, 0.16); border-radius: 12px; overflow: hidden; }
-    [data-p1-header="true"] { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid rgba(22, 18, 13, 0.06); background: rgba(255,255,255,0.62); }
-    [data-p1-body="true"] { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; max-height: min(48vh, 360px); overflow: auto; }
-    [data-p1-card="true"] { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.72); border-radius: 10px; }
-    [data-p1-card="true"][data-tone="error"] { border-color: rgba(140, 43, 27, 0.26); background: #fff2ef; color: #7e1e10; }
-    [data-p1-card="true"][data-tone="status"] { background: #fffdf8; }
+    [data-p1-hud="true"] { position: fixed; pointer-events: auto; width: min(360px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 6px; }
+    [data-p1-hud-head="true"] { display: flex; justify-content: flex-end; padding-right: 2px; }
+    [data-p1-inline-note="true"] { padding: 9px 11px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.94); border-radius: 12px; box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12); font-weight: 600; }
+    [data-p1-inline-note="true"][data-tone="error"] { border-color: rgba(140, 43, 27, 0.26); background: #fff2ef; color: #7e1e10; }
     [data-p1-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-    [data-p1-branches="true"] { display: flex; flex-direction: column; gap: 8px; }
-    [data-p1-branch-card="true"] { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 10px; border: 1px solid rgba(22, 18, 13, 0.08); background: #fffef9; cursor: pointer; }
-    [data-p1-branch-card="true"][data-selected="true"] { border-color: rgba(22, 18, 13, 0.3); box-shadow: inset 0 0 0 1px rgba(22, 18, 13, 0.08); }
+    [data-p1-branches="true"] { display: flex; flex-direction: column; gap: 6px; }
+    [data-p1-branch-card="true"] { display: flex; flex-direction: column; gap: 5px; padding: 10px 11px; border-radius: 12px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.95); box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12); cursor: pointer; }
+    [data-p1-branch-card="true"][data-selected="true"] { border-color: rgba(22, 18, 13, 0.3); box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12), inset 0 0 0 1px rgba(22, 18, 13, 0.08); }
     [data-p1-branch-card="true"][data-recommended="true"] { background: #f7f0e5; }
     [data-p1-annotation-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     [data-p1-move-label="true"] { font-size: 12px; font-weight: 700; }
     [data-p1-message="true"] { margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.36; }
     [data-p1-small="true"] { margin: 0; color: #5f5549; font-size: 11px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    [data-p1-branch-path="true"] { margin: 0; color: #746a5e; font-size: 11px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
     [data-p1-actions="true"] { display: flex; gap: 6px; flex-wrap: wrap; }
     [data-p1-button="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: #fffef9; color: #171411; border-radius: 999px; padding: 6px 9px; font: 600 10px/1.1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
     [data-p1-button="true"][data-tone="primary"] { background: #171411; color: #fffaf3; border-color: #171411; }
     [data-p1-help="true"] { font-size: 11px; color: #6a6054; }
-    [data-p1-outcome-row="true"] { display: flex; gap: 8px; flex-wrap: wrap; }
+    [data-p1-outcome="true"] { padding: 2px 0 0 2px; }
+    [data-p1-outcome-row="true"] { display: flex; gap: 6px; flex-wrap: wrap; }
   `;
   state.shellRoot = document.createElement("div");
   state.shellRoot.setAttribute("data-p1-shell", "true");
@@ -550,7 +545,7 @@ async function onShellClick(event) {
     await openHud({
       analyzeImmediately: true,
       allowWithoutCompose: false,
-      toggleIfOpen: false
+      toggleIfOpen: true
     });
     return;
   }
@@ -607,32 +602,25 @@ function buildHudMarkup() {
   const layout = computeHudLayout();
   const context = state.currentContext;
   const draftAssessment = state.analysis?.draftAssessment || evaluateDraftHeuristically(state.lastDraft, context);
-  const branchesMarkup = state.analysis?.branches?.length
-    ? `
-        <div data-p1-branches="true">
-          ${state.analysis.branches.map((branch) => buildBranchCard(branch)).join("")}
-        </div>
-      `
-    : `
-        <div data-p1-card="true">
-          <strong>${escapeHtml(state.isAnalyzing ? "reading the board..." : "click the icon or press ctrl/cmd+shift+space.")}</strong>
-        </div>
-      `;
+  const content = state.error
+    ? `<div data-p1-inline-note="true" data-tone="error">${escapeHtml(state.error)}</div>`
+    : state.isAnalyzing
+      ? `<div data-p1-inline-note="true">${escapeHtml(state.status || "reading the board...")}</div>`
+      : state.analysis?.branches?.length
+        ? `
+          <div data-p1-branches="true">
+            ${state.analysis.branches.map((branch) => buildBranchCard(branch)).join("")}
+          </div>
+          ${buildOutcomeMarkup()}
+        `
+        : `<div data-p1-inline-note="true">${escapeHtml(draftAssessment.label)}</div>`;
 
   return `
     <section data-p1-hud="true" style="top:${layout.top}px;left:${layout.left}px;">
-      <div data-p1-header="true">
-        <div data-p1-row="true">
-          <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(draftAssessment.annotation)}">${escapeHtml(draftAssessment.annotation)}</span>
-          <strong>${escapeHtml(draftAssessment.label)}</strong>
-        </div>
-        <button type="button" data-p1-button="true" data-p1-action="close-hud">x</button>
+      <div data-p1-hud-head="true">
+        <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(draftAssessment.annotation)}">${escapeHtml(draftAssessment.annotation)}</span>
       </div>
-      <div data-p1-body="true">
-        ${state.error ? `<div data-p1-card="true" data-tone="error"><strong>${escapeHtml(state.error)}</strong></div>` : ""}
-        ${branchesMarkup}
-        ${buildOutcomeMarkup()}
-      </div>
+      ${content}
     </section>
   `;
 }
@@ -656,10 +644,7 @@ function buildBranchCard(branch) {
       </div>
       <p data-p1-message="true">${escapeHtml(branch.message)}</p>
       <p data-p1-small="true">${escapeHtml(branch.predictedResponse)}</p>
-      <p data-p1-small="true">${escapeHtml(branch.branchPath)}</p>
-      <div data-p1-actions="true">
-        <button type="button" data-p1-button="true" data-tone="primary" data-p1-action="use-branch" data-option="${branch.optionId}">use</button>
-      </div>
+      <p data-p1-branch-path="true">${escapeHtml(branch.branchPath)}</p>
     </article>
   `;
 }
@@ -670,9 +655,7 @@ function buildOutcomeMarkup() {
   }
 
   return `
-    <div data-p1-card="true">
-      <p data-p1-section-title="true">how did it land?</p>
-      <p data-p1-small="true">this updates the local persona profile and mirror without asking you to fill out anything.</p>
+    <div data-p1-outcome="true">
       <div data-p1-outcome-row="true">
         <button type="button" data-p1-button="true" data-p1-action="record-outcome" data-outcome="positive">landed</button>
         <button type="button" data-p1-button="true" data-p1-action="record-outcome" data-outcome="neutral">neutral</button>
@@ -684,20 +667,20 @@ function buildOutcomeMarkup() {
 
 function computeHudLayout() {
   const composeRect = state.currentComposeTarget ? clampRect(state.currentComposeTarget.getBoundingClientRect()) : null;
-  const width = Math.min(Math.max((composeRect?.right || 0) - (composeRect?.left || 0), 280), 420, window.innerWidth - 24);
+  const width = Math.min(Math.max((composeRect?.right || 0) - (composeRect?.left || 0), 260), 360, window.innerWidth - 24);
 
   if (!composeRect) {
     return {
-      top: clampNumber(window.innerHeight / 2 - 120, 12, Math.max(12, window.innerHeight - 260)),
+      top: clampNumber(window.innerHeight / 2 - 90, 12, Math.max(12, window.innerHeight - 220)),
       left: clampNumber(window.innerWidth / 2 - width / 2, 12, Math.max(12, window.innerWidth - width - 12))
     };
   }
 
   const spaceBelow = window.innerHeight - composeRect.bottom;
   const top =
-    spaceBelow > 220
-      ? clampNumber(composeRect.bottom + 8, 12, Math.max(12, window.innerHeight - 260))
-      : clampNumber(composeRect.top - 248, 12, Math.max(12, window.innerHeight - 260));
+    spaceBelow > 180
+      ? clampNumber(composeRect.top + 42, 12, Math.max(12, window.innerHeight - 220))
+      : clampNumber(composeRect.top - 188, 12, Math.max(12, window.innerHeight - 220));
   const left = clampNumber(composeRect.right - width, 12, Math.max(12, window.innerWidth - width - 12));
 
   return { top, left };
@@ -719,15 +702,6 @@ function sanitizeContext(detected) {
     recipientLastMessage: detected.recipientLastMessage || null,
     contextConfidence: detected.contextConfidence || 50
   };
-}
-
-function describeContextLine(context) {
-  const pieces = [
-    context.platform,
-    context.recipientName || context.recipientHandle || null,
-    context.recipientLastMessage ? `last move: ${context.recipientLastMessage}` : null
-  ].filter(Boolean);
-  return pieces.join(" | ");
 }
 
 function recommendedOptionId(branches) {
