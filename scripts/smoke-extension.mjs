@@ -128,6 +128,11 @@ async function runScenario(input) {
 
   await page.waitForFunction(() => {
     const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return !root?.querySelector('[data-p1-launcher="true"]');
+  });
+
+  await page.waitForFunction(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
     return Boolean(root?.querySelector('[data-p1-branch-card="true"]'));
   }, { timeout: 60000 });
 
@@ -153,6 +158,11 @@ async function runScenario(input) {
   const afterInsert = await page.evaluate(input.readDraft);
   assert.notEqual(afterInsert, beforeInsert);
   assert.ok(afterInsert.length > 10);
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return Boolean(root?.querySelector('[data-p1-launcher="true"]'));
+  });
   await page.close();
 }
 

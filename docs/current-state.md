@@ -50,6 +50,7 @@ Extension capabilities now implemented:
 - fallback extraction
 - compact branch bloom rendering anchored directly to the active compose box
 - circular move icon anchored directly to the draft surface
+- closed-state launcher hides while the branch bloom is open and can be dragged or dismissed
 - keyboard-first analysis with `Ctrl/Cmd+Shift+Space`
 - chess-style draft annotations and branch annotations
 - option insertion into the active compose box

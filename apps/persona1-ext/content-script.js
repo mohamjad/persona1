@@ -40,7 +40,17 @@ const state = {
   isAnalyzing: false,
   status: "",
   error: "",
-  lastAppliedBranch: null
+  lastAppliedBranch: null,
+  launcherOffsetX: 0,
+  launcherOffsetY: 0,
+  launcherDismissed: false,
+  launcherDragActive: false,
+  launcherDragMoved: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  dragInitialOffsetX: 0,
+  dragInitialOffsetY: 0,
+  lastComposeSignature: null
 };
 
 if (!alreadyLoaded) {
@@ -79,6 +89,8 @@ function start() {
   window.addEventListener("click", refreshContext, true);
   window.addEventListener("input", onInputEvent, true);
   window.addEventListener("keydown", onGlobalKeydown, true);
+  window.addEventListener("pointermove", onGlobalPointerMove, true);
+  window.addEventListener("pointerup", onGlobalPointerUp, true);
   window.addEventListener("resize", renderUi, true);
   window.addEventListener("scroll", renderUi, true);
   state.refreshTimer = window.setInterval(refreshContext, 1200);
@@ -211,6 +223,15 @@ function refreshContext() {
   state.currentComposeTarget = detected?.composeNode || null;
   state.currentContext = detected ? sanitizeContext(detected) : null;
   state.lastDraft = normalizeComposeValue(state.currentComposeTarget);
+  const nextSignature = state.currentComposeTarget ? getComposeSignature(state.currentComposeTarget) : null;
+  if (nextSignature !== state.lastComposeSignature) {
+    state.lastComposeSignature = nextSignature;
+    state.launcherOffsetX = 0;
+    state.launcherOffsetY = 0;
+    state.launcherDismissed = false;
+    state.launcherDragActive = false;
+    state.launcherDragMoved = false;
+  }
   renderUi();
 }
 
@@ -494,7 +515,12 @@ function ensureRoot() {
   style.textContent = `
     :host, * { box-sizing: border-box; }
     [data-p1-shell="true"] { position: fixed; inset: 0; pointer-events: none; font: 400 13px/1.45 ui-sans-serif, system-ui, sans-serif; color: #171411; }
-    [data-p1-launcher="true"] { position: fixed; pointer-events: auto; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 1px solid rgba(22, 18, 13, 0.16); background: rgba(255, 251, 244, 0.98); color: #171411; box-shadow: 0 10px 28px rgba(22, 18, 13, 0.12); cursor: pointer; border-radius: 999px; }
+    [data-p1-launcher-wrap="true"] { position: fixed; pointer-events: auto; width: 36px; height: 36px; }
+    [data-p1-launcher="true"] { position: absolute; inset: 0; pointer-events: auto; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 1px solid rgba(22, 18, 13, 0.16); background: rgba(255, 251, 244, 0.98); color: #171411; box-shadow: 0 10px 28px rgba(22, 18, 13, 0.12); cursor: grab; border-radius: 999px; }
+    [data-p1-launcher="true"]:active { cursor: grabbing; }
+    [data-p1-launcher-dismiss="true"] { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border: 1px solid rgba(22, 18, 13, 0.14); border-radius: 999px; background: rgba(255, 251, 244, 0.98); color: #5f5549; box-shadow: 0 8px 20px rgba(22, 18, 13, 0.10); font: 700 10px/1 ui-sans-serif, system-ui, sans-serif; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 120ms ease; }
+    [data-p1-launcher-wrap="true"]:hover [data-p1-launcher-dismiss="true"],
+    [data-p1-launcher-wrap="true"]:focus-within [data-p1-launcher-dismiss="true"] { opacity: 1; }
     [data-p1-badge="true"] { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px; border: 1px solid rgba(22, 18, 13, 0.12); background: #171411; color: #fffaf3; font-weight: 700; letter-spacing: 0.01em; }
     [data-p1-badge-tone="good"] { background: #163a2d; color: #effff8; }
     [data-p1-badge-tone="risky"] { background: #6a241a; color: #fff6f2; }
@@ -523,6 +549,7 @@ function ensureRoot() {
   state.shellRoot = document.createElement("div");
   state.shellRoot.setAttribute("data-p1-shell", "true");
   state.shellRoot.addEventListener("click", onShellClick);
+  state.shellRoot.addEventListener("pointerdown", onShellPointerDown);
   shadow.append(style, state.shellRoot);
   mount.appendChild(state.shadowHost);
   return true;
@@ -542,11 +569,21 @@ async function onShellClick(event) {
 
   const action = actionNode.getAttribute("data-p1-action");
   if (action === "open-analyze") {
+    if (state.launcherDragMoved) {
+      state.launcherDragMoved = false;
+      return;
+    }
     await openHud({
       analyzeImmediately: true,
       allowWithoutCompose: false,
       toggleIfOpen: true
     });
+    return;
+  }
+
+  if (action === "dismiss-launcher") {
+    state.launcherDismissed = true;
+    renderUi();
     return;
   }
 
@@ -575,26 +612,75 @@ async function onShellClick(event) {
   }
 }
 
+function onShellPointerDown(event) {
+  const launcherNode = event.target?.closest?.("[data-p1-launcher='true']");
+  if (!launcherNode || state.hudOpen) {
+    return;
+  }
+
+  state.launcherDragActive = true;
+  state.launcherDragMoved = false;
+  state.dragStartX = event.clientX;
+  state.dragStartY = event.clientY;
+  state.dragInitialOffsetX = state.launcherOffsetX;
+  state.dragInitialOffsetY = state.launcherOffsetY;
+}
+
+function onGlobalPointerMove(event) {
+  if (!state.launcherDragActive) {
+    return;
+  }
+
+  const deltaX = event.clientX - state.dragStartX;
+  const deltaY = event.clientY - state.dragStartY;
+  state.launcherOffsetX = state.dragInitialOffsetX + deltaX;
+  state.launcherOffsetY = state.dragInitialOffsetY + deltaY;
+  if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
+    state.launcherDragMoved = true;
+  }
+  renderUi();
+}
+
+function onGlobalPointerUp() {
+  if (!state.launcherDragActive) {
+    return;
+  }
+
+  state.launcherDragActive = false;
+  window.setTimeout(() => {
+    state.launcherDragMoved = false;
+  }, 0);
+}
+
 function buildLauncherMarkup() {
-  if (!state.currentContext?.composeDetected || !state.currentComposeTarget) {
+  if (!state.currentContext?.composeDetected || !state.currentComposeTarget || state.hudOpen || state.launcherDismissed) {
     return "";
   }
 
   const rect = clampRect(state.currentComposeTarget.getBoundingClientRect());
   const heuristic = evaluateDraftHeuristically(state.lastDraft, state.currentContext);
-  const top = clampNumber(rect.top + 10, 12, window.innerHeight - 54);
-  const left = clampNumber(rect.right - 46, 12, Math.max(12, window.innerWidth - 54));
+  const top = clampNumber(rect.top + 10 + state.launcherOffsetY, 12, window.innerHeight - 54);
+  const left = clampNumber(rect.right - 46 + state.launcherOffsetX, 12, Math.max(12, window.innerWidth - 54));
 
   return `
-    <button
-      type="button"
-      data-p1-launcher="true"
-      data-p1-action="open-analyze"
-      style="top:${top}px;left:${left}px;"
-      aria-label="Analyze current draft with persona1"
-    >
-      <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(heuristic.annotation)}">${escapeHtml(heuristic.annotation)}</span>
-    </button>
+    <div data-p1-launcher-wrap="true" style="top:${top}px;left:${left}px;">
+      <button
+        type="button"
+        data-p1-launcher="true"
+        data-p1-action="open-analyze"
+        aria-label="Analyze current draft with persona1"
+      >
+        <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(heuristic.annotation)}">${escapeHtml(heuristic.annotation)}</span>
+      </button>
+      <button
+        type="button"
+        data-p1-launcher-dismiss="true"
+        data-p1-action="dismiss-launcher"
+        aria-label="Dismiss persona1 launcher"
+      >
+        ×
+      </button>
+    </div>
   `;
 }
 
@@ -1004,6 +1090,19 @@ function normalizeComposeValue(target) {
   }
 
   return "";
+}
+
+function getComposeSignature(target) {
+  if (!target) {
+    return "none";
+  }
+
+  const tag = target.tagName?.toLowerCase?.() || "node";
+  const role = target.getAttribute?.("role") || "";
+  const aria = target.getAttribute?.("aria-label") || "";
+  const id = target.id || "";
+  const classes = typeof target.className === "string" ? target.className.split(/\s+/).filter(Boolean).slice(0, 3).join(".") : "";
+  return [tag, role, aria, id, classes].join("|");
 }
 
 function insertComposeValue(target, value) {
