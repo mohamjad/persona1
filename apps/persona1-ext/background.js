@@ -114,15 +114,6 @@ async function handleAnalyzeRequest(message) {
     };
   }
 
-  const localDevMode = isLocalDevApi(state.settings?.apiBaseUrl);
-  if (!localDevMode && state.plan === "free" && state.usageCount >= 3) {
-    return {
-      ok: false,
-      requiresCheckout: true,
-      error: "Free usage limit reached."
-    };
-  }
-
   const analysis = await analyzeConversation({
     draft: message.payload.draft,
     preset: message.payload.preset,
@@ -131,30 +122,13 @@ async function handleAnalyzeRequest(message) {
     coldStartContext: state.coldStartContext,
     personaProfile: state.persona
   });
-  const usageCount = localDevMode ? state.usageCount : await incrementUsageCount();
+  const usageCount = await incrementUsageCount();
 
   return {
     ok: true,
     analysis,
     usageCount
   };
-}
-
-function isLocalDevApi(apiBaseUrl) {
-  if (!apiBaseUrl) {
-    return false;
-  }
-
-  try {
-    const url = new URL(apiBaseUrl);
-    return (
-      url.hostname === "127.0.0.1" ||
-      url.hostname === "localhost" ||
-      url.hostname === "::1"
-    );
-  } catch {
-    return false;
-  }
 }
 
 function inferColdStartContext(context) {

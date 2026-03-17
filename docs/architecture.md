@@ -74,7 +74,7 @@ The extension owns:
 - local observation logging
 - local persona storage
 - auth token presence for paid flows
-- local free-tier usage gating
+- local usage tracking
 - local mirror derivation
 - option insertion back into the live compose box
 - local communication scorecard generation
@@ -158,7 +158,7 @@ The repo currently implements:
 - local mirror surfacing
 - local communication scorecard
 - provider-backed persona update and mirror inference with deterministic fallback
-- free gate after three uses
+- usage tracking without analyze-time quota enforcement
 - Stripe adapter boundaries
 - Postgres adapter boundaries
 - Firebase-compatible auth verification boundary

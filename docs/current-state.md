@@ -10,7 +10,7 @@ Current repo status:
 - API implemented
 - Chrome extension implemented with an icon-anchored branch bloom as the active MVP surface
 - local-first persona engine implemented
-- billing and usage gate implemented
+- billing and usage tracking implemented
 - repository adapters implemented
 - provider-backed persona update and mirror inference implemented with deterministic fallback
 - Firebase-compatible auth verification boundary implemented
@@ -54,7 +54,7 @@ Extension capabilities now implemented:
 - chess-style draft annotations and branch annotations
 - option insertion into the active compose box
 - internal preset inference without exposing a preset picker in the live UI
-- local usage gate after three uses
+- local usage tracking without enforced free-cap blocking
 - local observation logging
 - local persona storage
 - local outcome capture

@@ -133,15 +133,6 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
           context,
           userId: input.userId
         });
-        const usage = options.config.billing.canAnalyze(user);
-        if (usage.paywallReached) {
-          sendJson(response, 402, {
-            error: "Free usage limit reached.",
-            usage
-          });
-          return;
-        }
-
         const analyzed = await options.analyzer.analyze(input);
         const output = AnalyzeResponseSchema.parse(analyzed);
         await options.config.repository.incrementUsage(user.userId, context.now());

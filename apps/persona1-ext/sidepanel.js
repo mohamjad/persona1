@@ -73,7 +73,7 @@ async function boot() {
     type: MESSAGE_TYPES.getExtensionState
   });
   extensionState = response.state;
-  ui.usageBadge.textContent = `${extensionState.plan} - ${extensionState.usageCount}/3`;
+  ui.usageBadge.textContent = `${extensionState.plan} - tracked ${extensionState.usageCount}`;
   renderStatus("Looking for an active compose box.");
 
   if (!extensionState.onboardingDone) {
@@ -163,9 +163,7 @@ async function analyzeCurrentContext() {
     if (response.requiresOnboarding) {
       ui.onboardingCard.classList.remove("hidden");
     }
-    if (response.requiresCheckout) {
-      ui.paywallCard.classList.remove("hidden");
-    }
+    ui.paywallCard.classList.add("hidden");
     renderError(response.error);
     sidebarState = transitionSidebarState(sidebarState, SIDEBAR_STATES.error, {
       lastError: response.error
@@ -174,7 +172,7 @@ async function analyzeCurrentContext() {
   }
 
   extensionState.usageCount = response.usageCount;
-  ui.usageBadge.textContent = `${extensionState.plan} - ${extensionState.usageCount}/3`;
+  ui.usageBadge.textContent = `${extensionState.plan} - tracked ${extensionState.usageCount}`;
   sidebarState = transitionSidebarState(sidebarState, SIDEBAR_STATES.branchesReady, {
     analysis: response.analysis
   });

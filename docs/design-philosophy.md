@@ -111,7 +111,7 @@ The MVP should prove:
 1. the branch tree feels real
 2. the extension can read live context on supported platforms
 3. the backend can serve inference reliably
-4. the paywall and usage gates work
+4. usage tracking and billing hooks work without distorting the core product loop
 5. the observation pipeline collects real training signal
 
 Everything else should follow that order.
