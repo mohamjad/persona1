@@ -32,6 +32,7 @@ export {
 export { BranchTreeParseError, parseBranchTreeOutput, parseJsonContract } from "./parser.js";
 export {
   buildBranchGeneratorPrompt,
+  buildScoringParameterizationPrompt,
   buildMirrorTriggerPrompt,
   buildPersonaUpdatePrompt,
   createAnalyzeInputSummary,

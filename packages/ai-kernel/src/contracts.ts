@@ -32,7 +32,23 @@ export const RecipientContextSchema = z.object({
   contextConfidence: z.number().int().min(0).max(100),
   currentConversationSummary: z.string().optional(),
   recentMessages: z.array(z.string()).optional(),
-  conversationGoalHint: z.string().optional()
+  conversationGoalHint: z.string().optional(),
+  structuredFacts: z
+    .object({
+      dates: z.array(z.string()),
+      amounts: z.array(z.string()),
+      numbers: z.array(z.string()),
+      urls: z.array(z.string()),
+      emails: z.array(z.string()),
+      mentions: z.array(z.string())
+    })
+    .optional(),
+  recipientSentiment: z.enum(["positive", "neutral", "negative"]).optional(),
+  sentimentConfidence: z.number().min(0).max(1).optional(),
+  dialogueState: z
+    .enum(["warm_open", "needs_clarity", "pricing_friction", "schedule_alignment", "soft_rejection", "low_signal"])
+    .optional(),
+  combinedSummary: z.string().optional()
 });
 
 export const MoveAnnotationSchema = z.enum(["-", "!!", "!", "!?", "?!", "?", "??"]);
@@ -60,7 +76,11 @@ export const BranchOptionSchema = z.object({
   strategicPayoff: z.string().min(1),
   goalAlignmentScore: z.number().int().min(0).max(100),
   whyItWorks: z.string().min(1),
-  risk: z.string().nullable()
+  risk: z.string().nullable(),
+  lookaheadSummary: z.string().optional(),
+  lookaheadScore: z.number().min(0).max(100).optional(),
+  simulationConfidence: z.number().min(0).max(1).optional(),
+  simulationSource: z.enum(["deterministic", "openrouter", "langgraph"]).optional()
 });
 
 export const BranchTreeSchema = z.object({
@@ -92,6 +112,16 @@ export const BranchTreeSchema = z.object({
     })
 });
 
+export const RelevantExampleSchema = z.object({
+  id: z.string().min(1),
+  preset: z.string().min(1),
+  archetype: z.string().nullable(),
+  scenario: z.string().min(1),
+  message: z.string().min(1),
+  outcome: z.string().nullable(),
+  whyItWorked: z.string().min(1)
+});
+
 export const AnalyzeRequestSchema = z.object({
   draft: z.string().min(1),
   preset: ConversationPresetSchema,
@@ -99,7 +129,9 @@ export const AnalyzeRequestSchema = z.object({
   context: RecipientContextSchema,
   prefetch: z.boolean().optional(),
   coldStartContext: ColdStartContextSchema.optional(),
-  personaProfile: PersonaProfileSchema.optional()
+  personaProfile: PersonaProfileSchema.optional(),
+  relevantMemories: z.array(z.string()).optional(),
+  relevantExamples: z.array(RelevantExampleSchema).optional()
 });
 
 export const AnalyzeResponseSchema = z.object({
@@ -109,6 +141,8 @@ export const AnalyzeResponseSchema = z.object({
   primaryGoal: z.string().min(1),
   draftAssessment: DraftAssessmentSchema,
   branches: BranchTreeSchema.shape.branches,
+  relevantMemories: z.array(z.string()).default([]),
+  relevantExamples: z.array(RelevantExampleSchema).default([]),
   scoringSessionKey: z.string().optional(),
   scoringConfig: ScoringConfigSchema.optional(),
   personaVersionUsed: z.number().int().positive(),
@@ -148,6 +182,7 @@ export type BranchOption = z.infer<typeof BranchOptionSchema>;
 export type BranchTree = z.infer<typeof BranchTreeSchema>;
 export type AnalyzeRequest = z.infer<typeof AnalyzeRequestSchema>;
 export type AnalyzeResponse = z.infer<typeof AnalyzeResponseSchema>;
+export type RelevantExample = z.infer<typeof RelevantExampleSchema>;
 export type PersonaUpdateRequest = z.infer<typeof PersonaUpdateRequestSchema>;
 export type PersonaUpdateResponse = z.infer<typeof PersonaUpdateResponseSchema>;
 export type MirrorCheckRequest = z.infer<typeof MirrorCheckRequestSchema>;

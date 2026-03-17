@@ -24,6 +24,7 @@ export interface Persona1RuntimeConfig {
   billing: BillingService;
   authTokens: AuthTokenService;
   freeUses: number;
+  firebaseProjectId: string | null;
 }
 
 interface RawBusinessConfig {
@@ -60,10 +61,15 @@ export async function loadRuntimeConfig(): Promise<Persona1RuntimeConfig> {
   const authSecret = process.env.PERSONA1_AUTH_SECRET?.trim() || crypto.randomBytes(32).toString("hex");
   const freeUses = Number(rawConfig.pricing?.free_uses ?? 3);
   const firebaseProjectId = process.env.FIREBASE_PROJECT_ID?.trim() || null;
+  const firebaseServiceAccountJson =
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim() ||
+    process.env.FIREBASE_SERVICE_ACCOUNT?.trim() ||
+    null;
   const authTokens =
     firebaseProjectId && process.env.PERSONA1_AUTH_MODE?.trim() === "firebase_jwt"
       ? createFirebaseJwtVerifier({
-          projectId: firebaseProjectId
+          projectId: firebaseProjectId,
+          serviceAccountJson: firebaseServiceAccountJson
         })
       : createLocalHmacAuthTokenService(authSecret);
 
@@ -88,6 +94,7 @@ export async function loadRuntimeConfig(): Promise<Persona1RuntimeConfig> {
       webhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() ?? null
     }),
     authTokens,
-    freeUses
+    freeUses,
+    firebaseProjectId
   };
 }

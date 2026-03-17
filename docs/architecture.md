@@ -50,16 +50,21 @@ The core inference path is four-stage plus one async mirror trigger:
    reads DOM/page content and extracts recipient context JSON
 2. `persona_loader`
    loads and calibrates the sender persona for the current context
-3. `branch_generator`
+3. `parameterizer`
+   builds a session scoring config once per live conversation
+4. `branch_generator`
    produces exactly three conversation branches
-4. `persona_updater`
+5. `branch_intelligence`
+   simulates likely downstream consequences and reranks branches through a LangGraph state graph
+6. `persona_updater`
    updates the persona profile after outcome signal
-5. `mirror_trigger`
+7. `mirror_trigger`
    surfaces recurring communication patterns after thresholded evidence
 
 Stages 1 and 2 are parallel.
 Stage 3 depends on both.
-Stages 4 and 5 are async.
+Stages 4 and 5 depend on the enriched context and scoring config.
+Stages 6 and 7 are async.
 
 ## Primary Product Surfaces
 
@@ -104,6 +109,8 @@ The database owns durable server-side state for:
 - personas
 - interactions
 - mirror insights
+- persona shards
+- few-shot examples
 
 ## State Boundaries
 
@@ -169,10 +176,14 @@ The repo currently implements:
 - deterministic scoring-engine evaluation using `json-rules-engine`
 - session-aware branch caching and scoring-config caching with 800ms typing-debounce prefetch
 - provider-backed persona update and mirror inference with deterministic fallback
+- provider-backed scoring parameterization with deterministic fallback
+- context enrichment using RecognizersText plus sentiment/dialogue-state classification
+- selective memory retrieval from interactions, persona shards, few-shot examples, and optional mem0 search
+- LangGraph branch-intelligence enrichment with explicit lookahead summaries and reranking
 - usage tracking without analyze-time quota enforcement
 - Stripe adapter boundaries
 - Postgres adapter boundaries
-- Firebase-compatible auth verification boundary
+- Firebase-compatible auth verification boundary plus a session bootstrap route
 
 ## Architectural Non-Negotiables
 
@@ -191,4 +202,4 @@ The code intentionally deviates from the original source spec in one active oper
 2. The active MVP UI is an injected icon-anchored branch bloom instead of Chrome's native side panel because the inline workflow is more reliable under MV3 gesture restrictions and avoids blocked embedded-extension pages.
 3. Runtime contract parsing is still zod-backed even though BAML contract source and generated clients now exist in-repo. This is an intentional staged cutover so contract source can land without destabilizing the live extension path.
 
-The auth story is no longer a structural deviation because a Firebase-compatible verifier already exists in code. The runtime still defaults to `local_hmac` until Firebase project configuration is supplied.
+The auth story is no longer a structural deviation because a Firebase-compatible verifier and session-bootstrap route now exist in code. The runtime still defaults to `local_hmac` until Firebase project configuration is supplied.

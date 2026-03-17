@@ -39,9 +39,14 @@ export async function ensureUser(input: {
   const user: UserRecord = {
     userId: input.userId,
     email: input.email?.trim() || `${input.userId}@persona1.local`,
+    firebaseUid: null,
     plan: "free",
     authMode: input.context.config.authMode,
     usageCount: 0,
+    performanceMu: null,
+    performanceSigma: null,
+    performanceOrdinal: null,
+    performanceMatches: null,
     stripeCustomerId: null,
     stripeSubscriptionId: null,
     createdAt: now,
@@ -116,6 +121,7 @@ export function toInteractionRecord(input: {
     outcome: input.interaction.outcome,
     observedSignals: input.interaction.observedSignals,
     metadata: input.metadata ?? {},
+    embedding: null,
     createdAt: new Date().toISOString()
   };
 }

@@ -8,7 +8,7 @@ export function deriveLocalMirrorInsights(observationQueue) {
   }
 
   return [...counts.entries()]
-    .filter(([, count]) => count >= 3)
+    .filter(([, count]) => count >= 5)
     .sort((left, right) => right[1] - left[1])
     .slice(0, 3)
     .map(([signal, count], index) => ({

@@ -14,6 +14,7 @@ Current repo status:
 - repository adapters implemented
 - provider-backed persona update and mirror inference implemented with deterministic fallback
 - Firebase-compatible auth verification boundary implemented
+- master_v2 runtime systems implemented: scoring parameterization, context enrichment, memory retrieval, rating, and branch simulation
 - tests implemented and passing
 
 ## Source Documents
@@ -25,6 +26,7 @@ Current canonical planning inputs:
 - [specs/persona1-phased-build-plan.md](/C:/Users/moham/persona1/specs/persona1-phased-build-plan.md)
 - [specs/persona1-master-source.txt](/C:/Users/moham/persona1/specs/persona1-master-source.txt)
 - [specs/persona1-master-phase-plan.md](/C:/Users/moham/persona1/specs/persona1-master-phase-plan.md)
+- [specs/persona1-master-v2-source.txt](/C:/Users/moham/persona1/specs/persona1-master-v2-source.txt)
 
 ## Implemented Product Surface
 
@@ -36,6 +38,7 @@ Implemented now:
 - `POST /v1/persona/sync`
 - `POST /v1/mirror/check`
 - `POST /v1/auth/register`
+- `POST /v1/auth/session`
 - `POST /v1/billing/checkout`
 - `POST /v1/billing/webhook`
 - `GET /v1/usage/:user_id`
@@ -76,6 +79,14 @@ Extension capabilities now implemented:
 - provider-backed persona update and mirror response handling for authenticated flows
 - self-contained browser smoke harness for LinkedIn-style, Gmail-style, and fallback compose analysis and branch insertion without depending on a stale external API process
 - scoring-engine package using `json-rules-engine` to score drafts against session-aware scoring configs
+- scoring parameterizer call through OpenRouter with deterministic fallback config generation
+- server-side context enrichment using RecognizersText facts plus recipient sentiment and dialogue-state classification
+- retrieved few-shot examples and persona-memory summaries injected into analysis calls
+- optional mem0 retrieval hook for cloud memory search when credentials are present
+- LangGraph-backed branch intelligence that simulates lookahead summaries and reranks branches before the response returns
+- performance rating persisted in persona profiles and mirrored into extension scorecards
+- persona shard persistence and few-shot example persistence in repository adapters and SQL migrations
+- mirror surfacing gated to 25-interaction checkpoints with a 5-evidence minimum
 
 ## What Exists Today
 
@@ -104,6 +115,7 @@ The repo is functional without these resources, but live behavior depends on the
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_ID` for live billing
 - `AI_OS_DATABASE_URL` or `PERSONA1_DATABASE_URL` for Cloud SQL / Postgres persistence
 - Firebase project configuration if the runtime auth mode is switched from local HMAC to Firebase JWT verification
+- `MEM0_API_KEY` and optional `MEM0_PROJECT_ID` if cloud memory search should be enabled
 
 ## Build Rule
 

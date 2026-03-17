@@ -7,6 +7,7 @@ import {
   type PersonaInteraction,
   type PersonaProfile
 } from "./schema.js";
+import { updatePerformanceRating } from "../../rating-engine/src/index.js";
 
 export interface PersonaUpdateResult {
   profile: PersonaProfile;
@@ -53,6 +54,10 @@ export function applyDeterministicPersonaUpdate(input: {
     ),
     learningPhase: nextPhase,
     observedPatterns: nextPatterns,
+    performanceRating: updatePerformanceRating({
+      profile,
+      interaction
+    }),
     knownStrengths: summarizeStrengths(nextPatterns),
     knownWeaknesses: summarizeWeaknesses(nextPatterns),
     contextPerformance: {
@@ -91,7 +96,7 @@ export function deriveMirrorInsights(input: {
   const now = input.now ?? new Date().toISOString();
 
   return profile.observedPatterns
-    .filter((pattern) => pattern.count >= 3 && pattern.confidence >= 0.45)
+    .filter((pattern) => pattern.count >= 5 && pattern.confidence >= 0.45)
     .sort((left, right) => right.count - left.count)
     .slice(0, 3)
     .map((pattern, index) =>
@@ -213,7 +218,7 @@ function mergeObservedPatterns(profile: PersonaProfile, interaction: PersonaInte
 }
 
 function deriveLearningPhase(interactionCount: number) {
-  if (interactionCount >= 24) {
+  if (interactionCount >= 25) {
     return "mirror_activation" as const;
   }
 

@@ -1,0 +1,202 @@
+[
+  {
+    "id": "pitch_1",
+    "preset": "pitch",
+    "archetype": "colleague",
+    "tags": ["clarity", "bounded choice", "summary"],
+    "scenario": "Recipient asked for the short version before deciding on a meeting.",
+    "message": "want the one-line version or the two-minute version?",
+    "outcome": "Recipient picked one and advanced the thread.",
+    "whyItWorked": "It turned a vague follow-up into a forced low-friction choice."
+  },
+  {
+    "id": "pitch_2",
+    "preset": "pitch",
+    "archetype": "stranger",
+    "tags": ["cold outreach", "specificity", "next step"],
+    "scenario": "Cold outreach where the recipient is curious but time-protective.",
+    "message": "if it helps, i can send the exact teardown in 4 bullets instead of asking for a call first.",
+    "outcome": "Recipient asked to see the teardown.",
+    "whyItWorked": "It removed meeting pressure and made the next move concrete."
+  },
+  {
+    "id": "pitch_3",
+    "preset": "pitch",
+    "archetype": "colleague",
+    "tags": ["intent test", "qualification"],
+    "scenario": "Recipient keeps replying but avoids committing to a next step.",
+    "message": "before i write the longer version, are you actually evaluating this or just curious?",
+    "outcome": "Recipient clarified intent quickly.",
+    "whyItWorked": "It forced the thread to reveal whether there was real buying energy."
+  },
+  {
+    "id": "pitch_4",
+    "preset": "pitch",
+    "archetype": "acquaintance",
+    "tags": ["soft pressure", "frame"],
+    "scenario": "Contact replied vaguely after initial interest.",
+    "message": "happy to send it, but i want to make sure i'm answering the real objection. what's the part that feels fuzzy right now?",
+    "outcome": "Recipient named the concern directly.",
+    "whyItWorked": "It moved the thread from polite drift into concrete objection handling."
+  },
+  {
+    "id": "negotiate_1",
+    "preset": "negotiate",
+    "archetype": "colleague",
+    "tags": ["pricing", "terms", "frame"],
+    "scenario": "Prospect pushes for discount without changing scope.",
+    "message": "i can move on price or scope, but not pretend both stayed the same. which lever matters more here?",
+    "outcome": "Recipient engaged on tradeoffs instead of repeating the ask.",
+    "whyItWorked": "It reframed the negotiation around explicit levers."
+  },
+  {
+    "id": "negotiate_2",
+    "preset": "negotiate",
+    "archetype": "stranger",
+    "tags": ["budget", "clarity"],
+    "scenario": "Budget concern appears early in the thread.",
+    "message": "is the constraint absolute budget or uncertainty about whether this solves enough pain to justify it?",
+    "outcome": "Recipient disclosed the real objection.",
+    "whyItWorked": "It separated money from conviction."
+  },
+  {
+    "id": "negotiate_3",
+    "preset": "negotiate",
+    "archetype": "colleague",
+    "tags": ["timing", "decision"],
+    "scenario": "They want to delay the decision into a vague future.",
+    "message": "totally fine to pause. i just want to know if this is a timing no or a fit no.",
+    "outcome": "Recipient answered directly.",
+    "whyItWorked": "It collapsed polite delay into a real decision."
+  },
+  {
+    "id": "date_1",
+    "preset": "date",
+    "archetype": "romantic",
+    "tags": ["spark", "momentum"],
+    "scenario": "The conversation is light but still generic.",
+    "message": "you're fun, but i still can't tell if you're dangerous in a good way or just well-trained.",
+    "outcome": "Recipient played back with personality.",
+    "whyItWorked": "It created tension without getting heavy."
+  },
+  {
+    "id": "date_2",
+    "preset": "date",
+    "archetype": "romantic",
+    "tags": ["plan", "low pressure"],
+    "scenario": "There is interest, but the chat is starting to stall.",
+    "message": "want to keep pretending we're mysterious online or grab a coffee this week?",
+    "outcome": "Recipient moved toward a date.",
+    "whyItWorked": "It made the invitation light and time-bounded."
+  },
+  {
+    "id": "date_3",
+    "preset": "date",
+    "archetype": "romantic",
+    "tags": ["testing interest", "clarity"],
+    "scenario": "They are replying, but the energy is inconsistent.",
+    "message": "i can't tell if you're busy or just giving me the polite version of no.",
+    "outcome": "Recipient clarified and re-engaged.",
+    "whyItWorked": "It surfaced the truth without sounding bitter."
+  },
+  {
+    "id": "reconnect_1",
+    "preset": "reconnect",
+    "archetype": "friend",
+    "tags": ["warm reopen", "specificity"],
+    "scenario": "Long gap since last contact.",
+    "message": "random, but you crossed my mind when i saw another terrible take on hiring. how have you been?",
+    "outcome": "Recipient reopened warmly.",
+    "whyItWorked": "It avoided the dead 'been a while' opener."
+  },
+  {
+    "id": "reconnect_2",
+    "preset": "reconnect",
+    "archetype": "colleague",
+    "tags": ["shared context", "timing"],
+    "scenario": "Reopening a professional relationship after silence.",
+    "message": "you were right about the market moving faster than most teams could handle. curious what you're seeing now.",
+    "outcome": "Recipient replied with a thoughtful update.",
+    "whyItWorked": "It reopened through shared context instead of guilt."
+  },
+  {
+    "id": "decline_1",
+    "preset": "decline",
+    "archetype": "colleague",
+    "tags": ["clean no", "respect"],
+    "scenario": "Need to decline without burning the thread.",
+    "message": "i'm going to pass for now. not because it looks bad — just because i can't give it enough attention to do it properly.",
+    "outcome": "Recipient accepted without friction.",
+    "whyItWorked": "It gave a clean reason without over-apologizing."
+  },
+  {
+    "id": "decline_2",
+    "preset": "decline",
+    "archetype": "acquaintance",
+    "tags": ["boundaries", "clarity"],
+    "scenario": "Someone keeps pushing for a commitment you do not want.",
+    "message": "i don't want to drag this out, so i'll be direct: i'm not the right fit for this one.",
+    "outcome": "Thread closed cleanly.",
+    "whyItWorked": "It ended ambiguity instead of extending politeness."
+  },
+  {
+    "id": "confront_1",
+    "preset": "confront",
+    "archetype": "colleague",
+    "tags": ["friction", "ownership"],
+    "scenario": "The other person created a mess and is framing it vaguely.",
+    "message": "i'm fine with fixing it. i'm not fine with pretending nobody caused it. what exactly happened on your side?",
+    "outcome": "Recipient gave specifics.",
+    "whyItWorked": "It preserved accountability without going theatrical."
+  },
+  {
+    "id": "confront_2",
+    "preset": "confront",
+    "archetype": "friend",
+    "tags": ["directness", "repair"],
+    "scenario": "Need to surface something that felt off.",
+    "message": "i'm not trying to make this dramatic. i just don't want to act like that landed well when it didn't.",
+    "outcome": "Recipient engaged seriously.",
+    "whyItWorked": "It named the issue while signaling repair over chaos."
+  },
+  {
+    "id": "apologize_1",
+    "preset": "apologize",
+    "archetype": "friend",
+    "tags": ["ownership", "repair"],
+    "scenario": "You need to apologize without making them manage your feelings.",
+    "message": "that landed worse than i meant it to, and that's on me. you didn't deserve the extra friction.",
+    "outcome": "Recipient softened and re-engaged.",
+    "whyItWorked": "It owned the impact without overperforming remorse."
+  },
+  {
+    "id": "apologize_2",
+    "preset": "apologize",
+    "archetype": "colleague",
+    "tags": ["clarity", "repair"],
+    "scenario": "A rushed response created confusion.",
+    "message": "i answered too fast and made this messier, not clearer. here's the clean version.",
+    "outcome": "Recipient accepted the reset.",
+    "whyItWorked": "It pivoted quickly from apology into usefulness."
+  },
+  {
+    "id": "close_1",
+    "preset": "close",
+    "archetype": "stranger",
+    "tags": ["decision", "final step"],
+    "scenario": "The thread is near decision but still evasive.",
+    "message": "if this is live, let's pick a time. if it's not, i'd rather know that too.",
+    "outcome": "Recipient chose one side.",
+    "whyItWorked": "It made ambiguity expensive."
+  },
+  {
+    "id": "close_2",
+    "preset": "close",
+    "archetype": "colleague",
+    "tags": ["yes/no", "momentum"],
+    "scenario": "You need to collapse the thread into a final answer.",
+    "message": "i think we're at the point where this is either a yes with logistics or a no with context. which is it?",
+    "outcome": "Recipient committed or declined.",
+    "whyItWorked": "It turned momentum theater into a decision."
+  }
+]

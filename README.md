@@ -10,14 +10,14 @@ The currently implemented product path includes:
 
 - Chrome extension with active-compose-only detection, low-information `-` states, keyboard-first analysis, a circular move icon, a three-outcome orb dock, selected-line unfolding preview, smooth motion, branch prefetch, option insertion, outcome capture, mirror surfacing, and local scorecard output
 - multi-platform extraction across LinkedIn, Gmail, X DMs, Slack, dating-app surfaces, and fallback compose targets
-- OpenRouter-backed analysis with strict contract parsing and provider-backed persona update and mirror inference
+- OpenRouter-backed analysis with strict contract parsing, per-session scoring parameterization, and provider-backed persona update and mirror inference
 - BAML contract source in `baml_src/` plus generated TypeScript client artifacts in `baml_client/`
 - Dexie-backed local storage, typed bridge scaffolding, branch cache, and scoring-config cache
-- deterministic local/server fallback behavior for persona evolution when provider paths fail
+- deterministic local/server fallback behavior for persona evolution, context enrichment, and branch simulation when provider paths fail
 - local-first persona storage, observation logging, usage gating, and sync-ready state
-- Node/TypeScript API with analyze, persona update, persona sync, mirror check, auth register, billing checkout/webhook, usage, and health routes
-- filesystem and Postgres persistence boundaries with explicit SQL migrations
-- Stripe billing boundary and Firebase-compatible JWT verification boundary
+- Node/TypeScript API with analyze, persona update, persona sync, mirror check, auth register, Firebase session bootstrap, billing checkout/webhook, usage, and health routes
+- filesystem and Postgres persistence boundaries with explicit SQL migrations for Firebase IDs, performance rating, persona shards, and few-shot examples
+- Stripe billing boundary, Firebase-compatible JWT verification, context enrichment, selective memory retrieval, and LangGraph-backed branch intelligence
 
 The full build and test suite is green with `corepack pnpm test`.
 
@@ -52,9 +52,9 @@ The current product direction is:
 
 `page context -> recipient context -> persona model -> branch tree -> selected move -> outcome -> persona update -> mirror`
 
-The current live implementation is local-first by default, with server-backed sync, billing, and durable storage available when runtime credentials are supplied.
+The current live implementation is local-first by default, with server-backed sync, billing, Firebase-capable auth, memory retrieval, and durable storage available when runtime credentials are supplied.
 
-The active MVP UI is an injected compose-surface orb dock rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the three outcome orbs rendered directly on that writing surface, then click an orb or hit `1`, `2`, or `3` to apply a move. The launcher only appears while a real compose box is active. Low-information drafts are explicitly marked `-` instead of pretending a decision exists. The dock opens collapsed by default, the selected or hovered orb shows how the conversation is likely to unfold, the closed-state icon hides while the dock is open and can be dragged or dismissed, and the transitions are smoothed with `@formkit/auto-animate` plus Motion. Cold start and preset selection are inferred from context instead of being exposed in the normal flow. Conversation-local context is now sent separately from broader profile tone so the model can weight the live thread first, and branch/scoring sessions are prefetched and cached locally through Dexie.
+The active MVP UI is an injected compose-surface orb dock rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the three outcome orbs rendered directly on that writing surface, then click an orb or hit `1`, `2`, or `3` to apply a move. The launcher only appears while a real compose box is active. Low-information drafts are explicitly marked `-` instead of pretending a decision exists. The dock opens collapsed by default, the selected or hovered orb shows how the conversation is likely to unfold, the closed-state icon hides while the dock is open and can be dragged or dismissed, and the transitions are smoothed with `@formkit/auto-animate` plus Motion. Cold start and preset selection are inferred from context instead of being exposed in the normal flow. Conversation-local context is sent separately from broader profile tone, enriched with deterministic facts and dialogue-state classification, then combined with retrieved examples and persona shards before branch generation. Branch/scoring sessions are prefetched and cached locally through Dexie.
 
 ## Local Runtime
 

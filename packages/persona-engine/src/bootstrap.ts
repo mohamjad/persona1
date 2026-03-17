@@ -12,6 +12,12 @@ export function createBootstrapPersonaProfile(input: {
     confidence: 0.2,
     learningPhase: "observation",
     communicationDefaults: buildDefaultCommunicationProfile(coldStartContext),
+    performanceRating: {
+      mu: 25,
+      sigma: 8.333333333333334,
+      ordinal: 0,
+      matches: 0
+    },
     observedPatterns: [],
     knownStrengths: [],
     knownWeaknesses: [],

@@ -14,13 +14,19 @@ import {
   buildBranchGeneratorPrompt,
   buildMirrorTriggerPrompt,
   buildPersonaUpdatePrompt,
+  buildScoringParameterizationPrompt,
   createAnalyzeResponse,
   createMirrorCheckResponse,
   createPersonaUpdateResponse
 } from "./prompt.js";
 import { parseBranchTreeOutput, parseJsonContract } from "./parser.js";
 import { createBootstrapPersonaProfile } from "../../../packages/persona-engine/src/index.js";
-import { buildScoringConfig, evaluateDraftWithConfig } from "../../scoring-engine/src/index.js";
+import {
+  buildScoringConfig,
+  evaluateDraftWithConfig,
+  ScoringConfigSchema
+} from "../../scoring-engine/src/index.js";
+import { runBranchIntelligence } from "../../branch-intelligence/src/index.js";
 
 type FetchLike = typeof fetch;
 
@@ -65,11 +71,23 @@ export function createOpenRouterConversationAnalyzer(
         createBootstrapPersonaProfile({
           coldStartContext: input.coldStartContext ?? "general"
         });
-      const scoringConfig = buildScoringConfig({
+      const fallbackScoringConfig = buildScoringConfig({
         draft: input.draft,
         context: input.context,
         personaProfile,
         preset: input.preset
+      });
+      const scoringConfig = await parameterizeScoringConfig({
+        apiKey: options.apiKey,
+        model,
+        baseUrl,
+        fetchImpl,
+        preset: input.preset,
+        context: input.context,
+        personaProfile,
+        relevantExamples: input.relevantExamples || [],
+        fallbackConfig: fallbackScoringConfig,
+        ...(options.appName ? { appName: options.appName } : {})
       });
       const draftScore = await evaluateDraftWithConfig({
         draft: input.draft,
@@ -83,6 +101,8 @@ export function createOpenRouterConversationAnalyzer(
         personaProfile,
         scoringConfig,
         draftScore,
+        relevantMemories: input.relevantMemories || [],
+        relevantExamples: input.relevantExamples || [],
         ...(options.voicePackId !== undefined ? { voicePackId: options.voicePackId } : {}),
         ...(options.voicePackText !== undefined ? { voicePackText: options.voicePackText } : {})
       });
@@ -118,10 +138,22 @@ export function createOpenRouterConversationAnalyzer(
       }
 
       const branchTree: BranchTree = parseBranchTreeOutput(content);
-      return createAnalyzeResponse({
+      const enrichedBranchTree = await runBranchIntelligence({
         branchTree,
+        context: input.context,
+        preset: input.preset,
+        draft: input.draft,
+        personaProfile,
+        scoringConfig,
+        draftAssessment: draftScore,
+        relevantMemories: input.relevantMemories || []
+      });
+      return createAnalyzeResponse({
+        branchTree: enrichedBranchTree,
         scoringConfig,
         draftAssessmentOverride: draftScore,
+        relevantMemories: input.relevantMemories || [],
+        relevantExamples: input.relevantExamples || [],
         personaVersionUsed: personaProfile.version,
         model
       });
@@ -210,4 +242,40 @@ async function requestOpenRouterContent(
   }
 
   return content;
+}
+
+async function parameterizeScoringConfig(input: {
+  apiKey: string;
+  model: string;
+  baseUrl: string;
+  fetchImpl: FetchLike;
+  appName?: string;
+  preset: AnalyzeRequest["preset"];
+  context: AnalyzeRequest["context"];
+  personaProfile: NonNullable<AnalyzeRequest["personaProfile"]>;
+  relevantExamples: NonNullable<AnalyzeRequest["relevantExamples"]>;
+  fallbackConfig: ReturnType<typeof buildScoringConfig>;
+}) {
+  try {
+    const prompt = buildScoringParameterizationPrompt({
+      preset: input.preset,
+      context: input.context,
+      personaProfile: input.personaProfile,
+      relevantExamples: input.relevantExamples
+    });
+    const content = await requestOpenRouterContent(input.fetchImpl, {
+      apiKey: input.apiKey,
+      model: input.model,
+      baseUrl: input.baseUrl,
+      messages: prompt.messages,
+      ...(input.appName ? { appName: input.appName } : {})
+    });
+    const parsed = parseJsonContract(content, ScoringConfigSchema, "scoring configuration");
+    return {
+      ...parsed,
+      sessionKey: parsed.sessionKey || input.fallbackConfig.sessionKey
+    };
+  } catch {
+    return input.fallbackConfig;
+  }
 }

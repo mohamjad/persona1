@@ -6,6 +6,7 @@ export {
   ObservedPatternSchema,
   ContextPerformanceEntrySchema,
   PlatformCalibrationEntrySchema,
+  PerformanceRatingSchema,
   MirrorInsightSchema,
   PersonaInteractionSchema,
   PersonaProfileSchema,
@@ -13,6 +14,7 @@ export {
   type LearningPhase,
   type OutcomeLabel,
   type MirrorInsight,
+  type PerformanceRating,
   type PersonaInteraction,
   type PersonaProfile
 } from "./schema.js";

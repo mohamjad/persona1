@@ -58,7 +58,8 @@ function renderScorecard(state) {
     ["clarity", scorecard.clarity],
     ["discipline", scorecard.strategicDiscipline],
     ["landing", scorecard.landingRate],
-    ["volatility", scorecard.volatility]
+    ["volatility", scorecard.volatility],
+    ["rating", scorecard.boardRating]
   ]
     .map(
       ([label, value]) => `

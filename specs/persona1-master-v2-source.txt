@@ -1,0 +1,894 @@
+
+persona1
+Pre-Implementation Master Document — With Full Sources
+UX + Infrastructure + Scoring + Anti-Drift Governance  ·  All external citations included  ·  March 2026
+
+This document is the single source of truth for persona1 pre-implementation. Every package, pattern, and decision references its external source — GitHub URL, license URL, PDF page, MDN reference, or specification. Nothing is stated without a traceable origin.
+
+Source Documents
+This document synthesises two deep research PDFs plus direct repo analysis. All external citations are drawn from these sources.
+
+Primary Research Sources
+UX Research PDF: https://github.com/mohamjad/persona1  — Premium UI infrastructure for persona1's injected conversation chess engine Chrome extension
+Infrastructure Research PDF: https://github.com/mohamjad/persona1  — Open-source infrastructure to make persona1 genuinely better than a thinly-wrapped LLM
+persona1 Repository: https://github.com/mohamjad/persona1  — Current codebase — architecture.md, current-state.md, AGENTS.md
+world1 Monorepo: https://github.com/mohamjad/world1  — Parent monorepo — shared infrastructure and business configs
+
+Chrome Extension Platform References
+MV3 Content Security Policy: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/content_security_policy  — MDN — MV3 forbids remote code execution, only 'self' and 'wasm-unsafe-eval' permitted
+Content Scripts: https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts  — Chrome for Developers — isolated world execution model
+Web Accessible Resources: https://developer.chrome.com/docs/extensions/reference/manifest/web-accessible-resources  — Chrome Developers — fonts, images, iframe HTML must be declared
+Shadow DOM: https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_shadow_DOM  — MDN — encapsulation boundary for injected UI
+CRXJS Execution Contexts: https://deepwiki.com/crxjs/chrome-extension-tools/3.3.2-execution-contexts-%28main-vs-isolated%29  — MAIN vs ISOLATED content script execution contexts
+
+Section 1  ·  Current State Audit
+What works, what is broken, what blocks real users
+
+1.1 Verified Component Status
+Component
+Status
+Chrome extension side-panel
+Working — cold start, compose detection, branch rendering, option insertion, outcome capture, mirror surfacing, local scorecard
+Platform extractors
+On disk and wired — LinkedIn, Gmail, X DMs, Slack, dating-app, fallback. Heuristic, not hardened against live DOM variants.
+OpenRouter inference
+/v1/analyze backed by OpenRouter (DeepSeek V3). Strict contract parsing present.
+Local persona storage
+Chrome storage. Versioned JSONB blob. Local-first for free users. Sync-ready for paid.
+Observation logging
+Draft raw/final, option chosen, outcome signal logged. Passive. Silent.
+Billing
+Stripe boundary implemented. Checkout opens browser tab — not embedded.
+Auth
+local_hmac stub. Firebase-compatible JWT boundary exists. Not live Firebase.
+Backend API
+Node/TypeScript Cloud Run. All routes present.
+Persona updater / mirror
+Deterministic first-pass. Not real inference. Learning loop not live.
+Chess annotation layer
+Symbols working. Pattern matching against generic heuristics. Not connected to recipient context, goal, or persona.
+ELO / scoring
+Not implemented.
+
+1.2 Three Hard Blockers
+These three gaps block any real user from completing the full loop.
+
+local_hmac must become live Firebase Auth before a single paid user touches the product.
+Persona updater and mirror are deterministic stubs. The learning loop does not exist yet.
+The annotation layer scores messages in isolation — no connection to goal, recipient context, persona, or preset. This is why it feels wrong.
+
+1.3 Clunky Symptoms Mapped to Root Causes
+Symptom
+Root cause
+Fix section
+Annotation gives wrong symbols
+No goal / recipient / persona connection
+Section 2
+Sidebar breaks on some sites
+No CSS isolation from host page
+Section 3 — Shadow DOM
+Transitions feel generic
+AutoAnimate only, no deliberate motion language
+Section 3 — Motion
+Branches feel slow
+No background prefetch before user asks
+Section 3 — Dexie prefetch
+Text looks different per site
+Host page fonts bleeding in
+Section 3 — Font bundling
+Branch predictions feel invented
+Predicted responses asserted not simulated
+Section 4 — Branch intelligence
+Persona never improves
+Updater is a stub
+Section 1.2 blocker #2
+
+Section 2  ·  The Scoring Problem
+Why the annotation is disconnected and the full fix
+
+2.1 Architecture
+Three layers. Different cost. Different timing. Together they make the annotation feel accurate instead of arbitrary.
+
+Layer 1 — Parameterization (once per conversation, ~1 API call)
+One LLM call fires when the compose context loads. Outputs a ScoringConfig JSON that drives annotation for the entire session. Cached in Dexie. Never repeated mid-session unless preset changes.
+
+{
+  "primary_goal": "get a yes to the meeting",
+  "conversation_phase": "close",
+  "tone_target": "warm-direct",
+  "blunder_patterns": ["apology opener", "defensive language", "too many options"],
+  "mistake_patterns": ["hedging before direct ask", "passive voice on ask"],
+  "interesting_patterns": ["reframe their concern", "callback to earlier thread"],
+  "brilliant_patterns": ["direct ask with single reason", "setup that makes them ask"],
+  "recipient_risk_factors": ["responds negatively to pressure"],
+  "persona_risk_factors": ["user hedges before asks"]
+}
+
+Layer 2 — Real-Time Deterministic (every keystroke, zero API calls)
+json-rules-engine takes the ScoringConfig and evaluates the current draft locally. Runs in under 5ms. Debounced 100ms. Returns symbol + reason + confidence.
+
+Rule engine source
+json-rules-engine  ·  MIT
+GitHub: https://github.com/CacheControl/json-rules-engine
+Source: Scoring architecture — not in PDFs, selected for TS compatibility
+JSON-defined rule engine. Takes fact set, evaluates against rule config. Perfect for dynamic scoring configs generated by LLM parameterization.
+
+Layer 3 — LLM Arbitration (only when confidence < 0.6)
+When rule engine returns ambiguous signals, a narrow LLM call fires. Not 'is this good' but 'given these specific signals, confirm or override the annotation.' Keeps LLM on edge cases only.
+
+2.2 Parameterization Prompt
+SYSTEM: You are the scoring configuration engine for persona1.
+Output a ScoringConfig JSON. No commentary.
+Name exact linguistic and structural patterns the rule engine can check.
+PERSONA: {PERSONA_JSON}
+RECIPIENT_CONTEXT: {CONTEXT_JSON}
+PRESET: {PRESET}
+FEW_SHOT_EXAMPLES: {RETRIEVED_EXAMPLES}
+
+2.3 Few-Shot Training Library
+Curated conversation examples stored in pgvector, retrieved at parameterization time by cosine similarity. Makes scoring grounded in real outcomes not abstract principles.
+
+Negotiation: Never Split the Difference case studies, recorded sales calls, FBI hostage negotiation examples
+Dating: documented conversations with outcome annotation, academic attraction/rapport literature
+Professional: email case studies, pitch recordings with known outcomes
+Conflict: mediation transcripts, Crucial Conversations and Radical Candor frameworks
+
+Embedding model
+text-embedding-3-small via OpenRouter — cheap, accurate for semantic similarity
+Storage
+pgvector table few_shot_examples in existing Cloud SQL
+Retrieval
+Top-k by cosine similarity to current preset + recipient archetype at parameterization time
+Initial size
+50-100 curated examples per major preset. Grows from user outcomes over time.
+
+Section 3  ·  UX Architecture
+Full stack — every package sourced from UX research PDF
+
+Every package in this section is sourced from the UX research PDF: Premium UI infrastructure for persona1's injected conversation chess engine Chrome extension. Citations include page numbers and original source URLs from the PDF.
+
+3.1 The Three Highest-Leverage UX Fixes
+Directly from UX research PDF synthesis section, p.10-11.
+
+Shadow DOM isolation — moves all extension UI into a ShadowRoot. Single biggest cause of clunky is CSS collision. This fixes it permanently.
+Deliberate motion language — AutoAnimate has a ceiling. Motion gives you spring physics, stagger timelines, and weighted glyph appearance. One consistent motion signature makes the product feel designed.
+Perceived zero latency — Dexie branch prefetch plus progressive disclosure. Show cached branches instantly. Skeleton on cache miss. Never show blank state.
+
+3.2 UI Mounting and Isolation
+
+hypothesis/browser-extension  ·  BSD-2-Clause
+GitHub: https://github.com/hypothesis/browser-extension
+Source: UX PDF p.1-2
+Production reference for injected premium UI on arbitrary pages. Study: mount/unmount patterns, UI robustness across hostile DOM/CSS environments. companion client repo at hypothesis/client.
+
+wxt-dev/wxt  ·  MIT
+GitHub: https://github.com/wxt-dev/wxt
+Source: UX PDF p.2 — cited as best MV3 DX framework
+Next-gen extension framework with explicit ShadowRoot UI mode (createShadowRootUi) and iframe UI mode. cssInjectionMode: 'ui' for scoped styles. License confirmed at github.com/wxt-dev/wxt/blob/main/LICENSE.
+
+WXT Content Scripts docs: https://wxt.dev/guide/essentials/content-scripts  — Shadow DOM and iframe injection patterns
+
+PlasmoHQ/plasmo  ·  MIT
+GitHub: https://github.com/PlasmoHQ/plasmo
+Source: UX PDF p.2
+Browser Extension Framework — CSUI philosophy for hardened injection. Shadow-root isolation, mount points, z-index policy. Strong blueprint if WXT migration is too heavy.
+
+crxjs/chrome-extension-tools  ·  MIT (vite-plugin package)
+GitHub: https://github.com/crxjs/chrome-extension-tools
+Source: UX PDF p.2
+Vite plugin for MV3 builds with native HMR. Speeds UX iteration — fewer polish passes wasted on build friction. License at github.com/crxjs/chrome-extension-tools/blob/main/packages/vite-plugin/LICENSE. DeepWiki: deepwiki.com/crxjs/chrome-extension-tools/3-vite-plugin-%28%40crxjsvite-plugin%29.
+
+GoogleChrome/chrome-extensions-samples  ·  Apache-2.0
+GitHub: https://github.com/GoogleChrome/chrome-extensions-samples
+Source: UX PDF p.3
+Canonical Chrome extension patterns including native side panel option. Reference for UI-related APIs. Mirrors at gitee.com/mirrors_GoogleChrome/chrome-extensions-samples.
+
+3.3 Animation
+
+motiondivision/motion  ·  MIT
+GitHub: https://github.com/motiondivision/motion
+Source: UX PDF p.3 — ranked #1 animation library
+Hybrid WAAPI + JS engine. Springs, stagger, layout-aware transitions. Ideal for: dock expand/collapse, branch card stagger, annotation glyph pop, selection confirmation. License: github.com/motiondivision/motion/blob/main/LICENSE.md. Bundle note: ~19KB → ~34KB gzip growth discussed at github.com/motiondivision/motion/discussions/2967. Tree-shake aggressively.
+
+// Branch card stagger — exact values
+animate('.branch-card',
+  { opacity: [0, 1], y: [8, 0] },
+  { delay: stagger(0.06), duration: 0.22,
+    easing: spring({ stiffness: 300, damping: 25 }) }
+)
+
+formkit/auto-animate  ·  MIT
+GitHub: https://github.com/formkit/auto-animate
+Source: UX PDF p.4 — already in repo
+Keep for incidental list transitions. Do NOT use for hero interactions — it has a ceiling. License at github.com/formkit/auto-animate/blob/master/LICENSE.
+
+motiondivision/motionone  ·  MIT
+GitHub: https://github.com/motiondivision/motionone
+Source: UX PDF p.3-4 — archived, secondary option
+WAAPI-first, extremely lightweight. Archived — stable but not evolving. Use Motion instead unless bundle size is critical. DeepWiki: deepwiki.com/motiondivision/motionone/3.3-animate-function.
+
+juliangarnier/anime  ·  MIT
+GitHub: https://github.com/juliangarnier/anime
+Source: UX PDF p.4 — tertiary option
+General-purpose JS animation. Fine for timeline-based card reveals. Less integrated with React state/layout than Motion. Use only if Motion is too heavy.
+
+GSAP — DO NOT USE. Listed at npmjs.com/package/gsap. Licensing is not MIT/Apache-2.0. Community discussion at gsap.com/community/forums/topic/26061 confirms license compatibility issues with MIT. Legal review required. Use Motion instead.
+
+3.4 Chess-Inspired UI Primitives
+
+nouarmohamed/pgn-viewer-parser  ·  Verify in repo
+GitHub: https://github.com/nouarmohamed/pgn-viewer-parser
+Source: UX PDF p.4
+TypeScript PGN parser/viewer with variations, comments, and NAGs (annotation symbols). The branch tree IS a PGN variations tree. Study: variation indentation, mainline emphasis, side-line collapse. Use as data modeling and UI structure reference — not literal PGN parsing.
+
+jhlywa/chess.js  ·  BSD-2-Clause
+GitHub: https://github.com/jhlywa/chess.js
+Source: UX PDF p.5
+TypeScript chess rules library. Reference for: evaluation labels, legal-move-like suggestions, consistent notion of state. Not needed for conversation logic directly — borrow the UI metaphors.
+
+oakmac/chessboardjs  ·  MIT
+GitHub: https://github.com/oakmac/chessboardjs
+Source: UX PDF p.5
+JS chessboard UI reference. Study: board-square highlighting, coordinate labeling, move list next to board layouts. Uses jQuery — do not import directly into MV3 React UI.
+
+Lichess (AGPL) and Chessground (GPL-3) are EXCLUDED. Both have viral licenses incompatible with a commercial product. Do not use. Do not reference code directly.
+
+3.5 Design System and Dark Mode
+
+radix-ui/primitives  ·  MIT
+GitHub: https://github.com/radix-ui/primitives
+Source: UX PDF p.6
+Accessible headless UI building blocks. High-quality, keyboard-driven, accessible. Dense sidebars and keyboard flows are first-class. License confirmed at github.com/radix-ui/primitives/blob/main/LICENSE.
+
+radix-ui/colors  ·  MIT
+GitHub: https://github.com/radix-ui/colors
+Source: UX PDF p.6
+Accessible color system with light/dark/alpha variants. Gray ramps and subtle depth for terminal-beautiful dark UI. Dark mode docs at radix-ui.com/themes/docs/theme/dark-mode. Color system at radix-ui.com/themes/docs/theme/color.
+
+shadcn-ui/ui  ·  MIT
+GitHub: https://github.com/shadcn-ui/ui
+Source: UX PDF p.6-7
+Copy-paste components built on Tailwind + Radix primitives. Own the code — surgically tweak for premium feel. Linear-ish minimal UI vibe out of the box. License at github.com/shadcn-ui/ui/blob/main/LICENSE.md. WARNING: some shadcn ecosystem sites sell paid blocks under separate licenses — verify before use. Full system at ui.shadcn.com.
+
+mantinedev/mantine  ·  MIT
+GitHub: https://github.com/mantinedev/mantine
+Source: UX PDF p.6-7
+Comprehensive React component library with built-in dark mode. 100+ components. Good for speed. Requires more customization to avoid generic SaaS aesthetics than Radix primitives.
+
+primer/react  ·  MIT
+GitHub: https://github.com/primer/react
+Source: UX PDF p.7
+GitHub Primer design system in React. Developer-tool feel. Dense, utility-meets-polish. Org repos at github.com/orgs/primer/repositories.
+
+3.6 Typography Sources
+Recommendations from UX PDF p.7. Bundle font files as extension assets. Declare in web_accessible_resources. No Google Fonts CDN (MV3 CSP issues).
+
+Font
+Source and use
+Geist Sans
+Vercel — vercel.com/font. Primary text. High legibility at small sizes in dense sidebars.
+Geist Mono
+Vercel — vercel.com/font. Metadata, risk profiles, keybindings, Bloomberg-terminal cues.
+Inter
+Alternative primary — rsms.me/inter. Proven in devtools contexts.
+JetBrains Mono
+Alternative mono — jetbrains.com/lp/mono. Excellent coding/terminal mono.
+
+3.7 Positioning and Annotation
+
+floating-ui/floating-ui  ·  MIT
+GitHub: https://github.com/floating-ui/floating-ui
+Source: UX PDF p.10
+Positioning engine for tooltips, popovers, menus with collision detection. Anchor annotation glyph and branch tree to compose surface, stable through scroll/zoom/resize. License at github.com/floating-ui/floating-ui/blob/master/LICENSE. Full docs at floating-ui.com.
+
+component/textarea-caret-position  ·  MIT
+GitHub: https://github.com/component/textarea-caret-position
+Source: UX PDF p.9-10
+Compute caret coordinates in textarea/input. Premium caret-adjacent glyph placement — annotation symbols appear exactly where the user is typing. Requires editor-specific handling (contenteditable vs textarea).
+
+timdown/rangy  ·  MIT
+GitHub: https://github.com/timdown/rangy
+Source: UX PDF p.10
+Cross-browser range/selection helpers for contenteditable. Many compose surfaces are contenteditable. Reliable selection info for injection points without mutating editor DOM. Must avoid interfering with IME and host editor event handling.
+
+QuivrHQ/auto-correct  ·  NO LICENSE CONFIRMED
+GitHub: https://github.com/QuivrHQ/auto-correct
+Source: UX PDF p.9
+Architecture reference ONLY. Real-time detection and rendering of underlines across many editors (CKEditor, Gmail, Notion). The underline-renderer and text-field-manager architecture parallels persona1's annotation injection needs. Do not use code directly — no OSS license confirmed on this repo.
+
+3.8 Keyboard and Interaction
+
+jamiebuilds/tinykeys  ·  MIT
+GitHub: https://github.com/jamiebuilds/tinykeys
+Source: UX PDF p.8-9
+Lightweight keybinding library. Clean handling of Cmd/Ctrl+Shift+Space, 1/2/3, Esc without heavy React abstractions. MV3-safe.
+
+JohannesKlauss/react-hotkeys-hook  ·  MIT
+GitHub: https://github.com/JohannesKlauss/react-hotkeys-hook
+Source: UX PDF p.9
+React hooks for hotkeys. Scope hotkeys to UI open state. Prevent propagation to host page. Use alongside tinykeys.
+
+dip/cmdk  ·  MIT
+GitHub: https://github.com/dip/cmdk
+Source: UX PDF p.8
+Fast unstyled command menu React component — core primitive behind Raycast-like UIs. Future use: keyboard-driven mode/preset selection. License at github.com/dip/cmdk/blob/main/LICENSE.md.
+
+3.9 Local Storage
+
+dexie/Dexie.js  ·  Apache-2.0
+GitHub: https://github.com/dexie/Dexie.js
+Source: UX PDF p.8 + Infrastructure PDF p.20
+IndexedDB wrapper. Queryable, indexed, transactional local storage. Upgrade from ad-hoc chrome.storage.local. License at github.com/dexie/Dexie.js/blob/master/LICENSE. WARNING: Dexie Cloud (sync server) has separate license terms at dexie.org/cloud/server-software-license-terms — keep legal eyes open. OSS Dexie.js itself is Apache-2.0.
+
+serversideup/webext-bridge  ·  MIT
+GitHub: https://github.com/serversideup/webext-bridge
+Source: Infrastructure PDF p.20-21
+Type-safe message passing between extension contexts. Eliminates untyped chrome.runtime.sendMessage across service worker, content script, sidebar, popup.
+
+automerge/automerge  ·  MIT
+GitHub: https://github.com/automerge/automerge
+Source: Infrastructure PDF p.21 — future use
+CRDT engine with sync protocol. 'PostgreSQL for your local-first app.' Phase-two infra if multi-device local-first sync is needed beyond queued events.
+
+Section 4  ·  Infrastructure Layers
+All packages sourced from infrastructure research PDF
+
+Every package in this section is sourced from: Open-source infrastructure to make persona1 genuinely better than a thinly-wrapped LLM. Page numbers and ranking positions cited throughout.
+
+4.1 Contract Enforcement — Phase 1
+BoundaryML/baml  ·  Apache-2.0
+GitHub: https://github.com/BoundaryML/baml
+Source: Infrastructure PDF p.9 — Ranked #1 highest leverage addition
+Schema-first prompting language. Turns LLM calls into typed functions with automatic retry on malformed output. Explicit OpenRouter support. Directly addresses persona1's architectural non-negotiable: branch outputs must be parsed against strict contracts. Migrate context_extractor and branch_generator into BAML functions. Generate TypeScript clients in packages/ai-kernel.
+
+vercel/ai  ·  Apache-2.0
+GitHub: https://github.com/vercel/ai
+Source: Infrastructure PDF p.9
+TypeScript AI SDK with provider abstraction and caching middleware. Use if BAML is too opinionated — clean abstraction over OpenRouter plus prompt caching hooks. Caching docs at ai-sdk.dev/docs/advanced/caching.
+
+langchain-ai/langchainjs  ·  MIT
+GitHub: https://github.com/langchain-ai/langchainjs
+Source: Infrastructure PDF p.10
+JS/TS framework with structured output support (Zod/JSON Schema). Alternative to BAML if composing in TypeScript is preferred. Adopt selectively — structured output + caching only. Avoid framework gravity. Structured output docs at docs.langchain.com/oss/javascript/langchain/structured-output.
+
+4.2 Persona Memory — Phase 4
+mem0ai/mem0  ·  Apache-2.0
+GitHub: https://github.com/mem0ai/mem0
+Source: Infrastructure PDF p.2 — Ranked #1 best fit for persona memory
+Universal memory layer for AI agents. search(query, user_id) retrieves relevant memories. add(messages, user_id) creates memories. mem0-ts directory confirms TypeScript/JS first-class support. Maps to persona_loader stage — retrieve relevant persona shards for context instead of injecting full profile.
+
+getzep/zep  ·  Apache-2.0
+GitHub: https://github.com/getzep/zep
+Source: Infrastructure PDF p.2 — Strong alternative to mem0
+Long-term memory store for AI assistants. Oriented around storing/retrieving conversational history and derived memory. Aligns with passive learning constraint. Typically run as a separate service — integrate via API.
+
+letta-ai/letta  ·  Apache-2.0
+GitHub: https://github.com/letta-ai/letta
+Source: Infrastructure PDF p.3 — Architecture reference
+Memory-first agent runtime. Use as design reference for memory segmentation: durable core memory (stable traits) vs expandable archival memory (contextual tactics). Do not adopt wholesale — selective reuse or reference only.
+
+run-llama/LlamaIndexTS  ·  MIT
+GitHub: https://github.com/run-llama/LlamaIndexTS
+Source: Infrastructure PDF p.3 — TS-native retrieval toolbox
+TypeScript LlamaIndex. Indexing + retrieval patterns for RAG-style pipelines. Use if selective retrieval is needed without adopting a full agent platform. Define schemas, chunking, and update policies.
+
+pgvector/pgvector  ·  PostgreSQL license
+GitHub: https://github.com/pgvector/pgvector
+Source: Infrastructure PDF p.4 — Postgres-compatible foundation
+Vector similarity search as Postgres extension. Already on Postgres — add vector column to interactions and new persona_shards table. No new datastore. Per-user memory retrieval with SQL filters. Low-medium operational complexity via Cloud SQL migrations.
+
+4.3 Relationship Graph — Phase 7
+apache/age  ·  Apache-2.0
+GitHub: https://github.com/apache/age
+Source: Infrastructure PDF p.5 — Best fit graph-on-Postgres
+Graph database extension for PostgreSQL. openCypher queries inside existing Cloud SQL. No new datastore. Use when SQL joins become too expressive for archetype similarity and tactic transfer questions.
+
+supabase/pg_graphql  ·  Apache-2.0
+GitHub: https://github.com/supabase/pg_graphql
+Source: Infrastructure PDF p.5
+Adds GraphQL support to PostgreSQL by reflecting SQL schema. Useful for exposing relationship data to extension/admin tooling without extra servers.
+
+graphology/graphology  ·  MIT
+GitHub: https://github.com/graphology/graphology
+Source: Infrastructure PDF p.5
+JS/TS graph object + algorithms (traversals, centrality, community detection). Compute relationship features in Node on graph snapshots from Postgres/AGE. Recipient difficulty scoring, archetype clustering, mirror insights.
+
+hasura/graphql-engine  ·  Apache-2.0
+GitHub: https://github.com/hasura/graphql-engine
+Source: Infrastructure PDF p.6
+Auto-generated GraphQL/REST over databases with event triggers. Use if outcome logging → derived feature computation becomes a bottleneck. License at github.com/hasura/graphql-engine/blob/master/LICENSE.
+
+4.4 Context Understanding — Phase 3
+huggingface/transformers.js  ·  Apache-2.0
+GitHub: https://github.com/huggingface/transformers.js
+Source: Infrastructure PDF p.7 — Ranked #1 no-fine-tune JS inference
+Runs pretrained transformer models in browser/Node via ONNX Runtime. Text classification, NER, embeddings, zero-shot classification. Run sentiment/emotion pre-classification on recipient's last message before context extraction LLM call. Start in API first to avoid MV3 bundle size constraints.
+
+microsoft/RecognizersText  ·  MIT
+GitHub: https://github.com/spsforks/microsoft-Recognizers-Text
+Source: Infrastructure PDF p.7
+Deterministic recognition/resolution of dates, times, numbers, amounts across languages. Preprocessing step in context_extractor — inject as structured trusted fields. Eliminates LLM tokens for entity extraction.
+
+aurelio-labs/semantic-router  ·  MIT
+GitHub: https://github.com/aurelio-labs/semantic-router
+Source: Infrastructure PDF p.8
+Embedding router for intent/tool selection. Classify short messages ('k', 'sure', 'let's talk') into actionable dialogue states without LLM call. Requires embedding provider — use local transformers.js or remote.
+
+axa-group/nlp.js  ·  MIT
+GitHub: https://github.com/orgs/axa-group/repositories
+Source: Infrastructure PDF p.8
+Node-native NLP library with entity extraction, sentiment analysis, language ID. Lightweight deterministic feature-extractor before LLM calls.
+
+CornellNLP/ConvoKit  ·  MIT
+GitHub: https://github.com/CornellNLP/ConvoKit
+Source: Infrastructure PDF p.8
+Conversation analysis research toolkit. Offline analytics — conversation coordination, politeness strategies. Python. Most valuable as offline component writing features back to Postgres for mirror insights and archetype features.
+
+4.5 Prompt Efficiency — Phase 1-2
+zilliztech/GPTCache  ·  MIT
+GitHub: https://github.com/zilliztech/GPTCache
+Source: Infrastructure PDF p.10
+Semantic cache for LLM queries. Context extraction stage is prime caching target — many DOM patterns repeat per platform. Python-first, best as sidecar or replaced with in-house exact cache.
+
+microsoft/LLMLingua  ·  MIT
+GitHub: https://github.com/microsoft/LLMLingua
+Source: Infrastructure PDF p.10
+Prompt compression to reduce tokens while retaining key info. Relevant when persona profile + context gets long. Python integration — introduce behind feature flag and measure per platform. Critical for nuance in conversation context.
+
+4.6 Branch Intelligence — Phase 6
+princeton-nlp/tree-of-thought-llm  ·  MIT
+GitHub: https://github.com/princeton-nlp/tree-of-thought-llm
+Source: Infrastructure PDF p.11 — Research-grounded tree search
+Official Tree of Thoughts implementation. BFS/DFS + value/vote pattern for candidate generation, evaluation, pruning. Port algorithmic pattern to TypeScript — do not embed Python codebase directly.
+
+queelius/mcts-reasoning  ·  MIT
+GitHub: https://github.com/queelius/mcts-reasoning
+Source: Infrastructure PDF p.12 — Modern lookahead via MCTS
+Monte Carlo Tree Search for LLM-based reasoning. MCTS maps to simulating downstream consequences of a message. Treat each candidate reply as action, sample recipient responses as rollouts, backpropagate reward from outcome signal. Python — implement TS-native light MCTS once approach is validated.
+
+langchain-ai/langgraphjs  ·  MIT
+GitHub: https://github.com/langchain-ai/langgraphjs
+Source: Infrastructure PDF p.12 — TS-native branching substrate
+Graph-based agent/workflow orchestration. Conversation branch tree is literally a graph workflow. Encode extract → model → branch → simulate → rank with explicit state persistence.
+
+microsoft/autogen  ·  MIT (code)
+GitHub: https://github.com/microsoft/autogen
+Source: Infrastructure PDF p.13
+Multi-agent framework. Model sender agent + recipient agent for simulated dialogues as rollouts. Python-centric — best as research/prototyping engine to validate whether multi-agent rollouts improve prediction quality. Docs CC-BY-4.0.
+
+stanfordnlp/dspy  ·  MIT
+GitHub: https://github.com/stanfordnlp/dspy
+Source: Infrastructure PDF p.13
+Framework for programming LMs with modular components and optimization algorithms. Use once modules are explicit (act classification, branch generation, branch evaluation) — systematically tune prompts from logged outcomes without hand-editing strings.
+
+4.7 ELO and Feedback Loops — Phase 5
+philihp/openskill.js  ·  MIT
+GitHub: https://github.com/philihp/openskill.js
+Source: Infrastructure PDF p.17 — Ranked #1 ELO system
+TypeScript Weng-Lin Bayesian rating. Models uncertainty (mu, sigma). Better than plain ELO for sparse interactions. Active — latest release March 4 2026. Perfect for recipient difficulty weighting.
+
+ReedD/glicko-two  ·  MIT
+GitHub: https://github.com/ReedD/glicko-two
+Source: Infrastructure PDF p.18
+TypeScript Glicko-2 implementation. Rating deviation and volatility concepts better than ELO when users have few matches or behavior drifts over time. Alternative to openskill.js.
+
+williamgrosset/teslo  ·  MIT
+GitHub: https://github.com/williamgrosset/teslo
+Source: Infrastructure PDF p.18
+Lightweight TypeScript ELO for multiple game modes. Simple and transparent for MVP communication ELO if openskill.js is overkill.
+
+SouthBridgeAI/eloranker  ·  Apache-2.0
+GitHub: https://github.com/SouthBridgeAI/eloranker
+Source: Infrastructure PDF p.18
+TypeScript library for ranking items based on pairwise comparisons. Use for ranking moves/templates — which apology move beats another for a given archetype based on outcomes. Internal move book ranking.
+
+suissa/Full-Multi-Armed-Bandits  ·  MIT
+GitHub: https://github.com/suissa/Full-Multi-Armed-Bandits
+Source: Infrastructure PDF p.14
+Zero-dependency TypeScript MAB — epsilon-greedy, UCB, Thompson sampling, contextual bandit families including LinUCB. Re-rank branches based on context features. Low social proof — validate correctness and potentially fork.
+
+VowpalWabbit/vowpal_wabbit  ·  Permissive
+GitHub: https://github.com/VowpalWabbit/vowpal_wabbit
+Source: Infrastructure PDF p.15
+Industrial-grade online learning with explicit contextual bandit algorithms. Use if branch choice policy becomes core IP and you need scale/rigor. Non-TS core — integration via bindings or service.
+
+online-ml/river  ·  BSD-3-Clause
+GitHub: https://github.com/online-ml/river
+Source: Infrastructure PDF p.16
+Python incremental/online learning library. Build lightweight preference models per user without full training pipelines. Python microservice writing weights back to Postgres. License at riverml.xyz/dev/license/license.
+
+thoughtworks/simplebandit — ARCHIVED June 2, 2025. Do not use in production. Fork only if desperate for the specific mechanics.
+
+Section 5  ·  GCP Architecture
+Existing resources plus additions by phase
+
+5.1 Existing GCP Resources
+Resource
+Current use
+Cloud Run
+apps/persona1-api — serverless, scales to zero
+Cloud SQL (Postgres)
+users, personas, interactions, mirror_insights tables
+Secret Manager
+OPENROUTER_API_KEY, STRIPE_SECRET, DB_URL, FIREBASE_SERVICE_ACCOUNT
+Cloud Logging
+Request logs, error tracking, usage metrics
+Firebase Auth
+JWT boundary exists, not live — blocker #1
+
+5.2 GCP Additions by Phase
+Phase
+GCP change
+Notes
+Phase 1
+None — all code-level
+BAML, Dexie, webext-bridge are library additions only
+Phase 2
+Firebase Auth enable in GCP project
+Add firebase-admin to Cloud Run. No new GCP services.
+Phase 3
+Cloud Run memory increase to 2GB
+ONNX models cached in instance memory for transformers.js
+Phase 4
+pgvector extension on existing Cloud SQL
+ALTER SYSTEM. No new instance. Add persona_shards + few_shot_examples tables via migration.
+Phase 5
+None — openskill.js is in-process
+ELO stored in users table columns
+Phase 6
+Cloud Tasks for async lookahead simulation
+Branch lookahead as async task, not inline
+Phase 7
+Apache AGE extension on Cloud SQL
+Requires Cloud SQL Postgres 14+
+
+5.3 Full Cloud SQL Migrations
+Phase 2
+ALTER TABLE users ADD COLUMN firebase_uid TEXT UNIQUE;
+
+Phase 4 — pgvector + persona shards + few-shot library
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE interactions ADD COLUMN embedding vector(1536);
+
+CREATE TABLE persona_shards (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  shard_type TEXT,
+  content TEXT NOT NULL,
+  embedding vector(1536),
+  platform TEXT,
+  recipient_archetype TEXT,
+  confidence NUMERIC(4,3) DEFAULT 0.5,
+  data_point_count INTEGER DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX ON persona_shards USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+CREATE TABLE few_shot_examples (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  preset TEXT NOT NULL,
+  recipient_archetype TEXT,
+  situation_description TEXT NOT NULL,
+  example_content TEXT NOT NULL,
+  outcome_signal TEXT,
+  source TEXT,
+  embedding vector(1536),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX ON few_shot_examples USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+
+Phase 5 — ELO
+ALTER TABLE users ADD COLUMN elo_mu NUMERIC(8,4) DEFAULT 25.0;
+ALTER TABLE users ADD COLUMN elo_sigma NUMERIC(8,4) DEFAULT 8.333;
+ALTER TABLE users ADD COLUMN elo_ordinal NUMERIC(8,4) DEFAULT 0.0;
+ALTER TABLE interactions ADD COLUMN recipient_difficulty_estimate NUMERIC(4,3);
+ALTER TABLE interactions ADD COLUMN elo_delta NUMERIC(8,4);
+
+Section 6  ·  Full Dependency Registry
+Every package, license, phase, source URL, and ADR
+
+Every entry includes: GitHub URL (clickable), license, which phase it is added, PDF source reference, and ADR number. Packages without an ADR are marked pending — write the ADR before the PR.
+
+UX and Extension Architecture Packages
+Package
+License
+Phase
+Source
+wxt-dev/wxt
+MIT
+1
+UX PDF p.2 — ADR-001
+motiondivision/motion
+MIT
+1
+UX PDF p.3 — ADR-002
+floating-ui/floating-ui
+MIT
+1
+UX PDF p.10 — ADR-003
+radix-ui/primitives
+MIT
+1
+UX PDF p.6 — ADR-004
+radix-ui/colors
+MIT
+1
+UX PDF p.6 — ADR-005
+shadcn-ui/ui
+MIT
+1
+UX PDF p.6 — ADR-006
+jamiebuilds/tinykeys
+MIT
+1
+UX PDF p.8 — ADR-007
+dexie/Dexie.js
+Apache-2.0
+1
+UX PDF p.8 + Infra PDF p.20 — ADR-008
+serversideup/webext-bridge
+MIT
+1
+Infra PDF p.21 — ADR-009
+component/textarea-caret-position
+MIT
+1
+UX PDF p.10 — ADR-010
+timdown/rangy
+MIT
+1
+UX PDF p.10 — ADR-011
+JohannesKlauss/react-hotkeys-hook
+MIT
+1
+UX PDF p.9 — ADR-012
+formkit/auto-animate
+MIT
+existing
+Already in repo — no ADR needed
+dip/cmdk
+MIT
+future
+UX PDF p.8 — ADR-013 pending
+automerge/automerge
+MIT
+future
+Infra PDF p.21 — ADR-014 pending
+
+Infrastructure Packages
+Package
+License
+Phase
+Source
+BoundaryML/baml
+Apache-2.0
+1
+Infra PDF p.9 — ADR-015
+CacheControl/json-rules-engine
+MIT
+1
+Scoring architecture — ADR-016
+firebase-admin
+Apache-2.0
+2
+Auth blocker — ADR-017
+firebase (client)
+Apache-2.0
+2
+Auth blocker — ADR-018
+huggingface/transformers.js
+Apache-2.0
+3
+Infra PDF p.7 — ADR-019 pending
+microsoft/RecognizersText
+MIT
+3
+Infra PDF p.7 — ADR-020 pending
+aurelio-labs/semantic-router
+MIT
+3
+Infra PDF p.8 — ADR-021 pending
+pgvector/pgvector
+PostgreSQL
+4
+Infra PDF p.4 — ADR-022 pending
+mem0ai/mem0
+Apache-2.0
+4
+Infra PDF p.2 — ADR-023 pending
+philihp/openskill.js
+MIT
+5
+Infra PDF p.17 — ADR-024 pending
+langchain-ai/langgraphjs
+MIT
+6
+Infra PDF p.12 — ADR-025 pending
+apache/age
+Apache-2.0
+7
+Infra PDF p.5 — ADR-026 pending
+graphology/graphology
+MIT
+7
+Infra PDF p.5 — ADR-027 pending
+vercel/ai
+Apache-2.0
+alt
+Infra PDF p.9 — ADR-028 pending
+suissa/Full-Multi-Armed-Bandits
+MIT
+5 alt
+Infra PDF p.14 — ADR-029 pending
+SouthBridgeAI/eloranker
+Apache-2.0
+5 alt
+Infra PDF p.18 — ADR-030 pending
+
+EXCLUDED PERMANENTLY: gsap (license issues), Lichess/Chessground (AGPL/GPL-3), Python in application kernel, separate vector DB, thoughtworks/simplebandit (archived), distribution logic in extension, LangChain in hot path.
+
+Section 7  ·  Anti-Drift Governance
+Rules that keep the system clean as it grows
+
+7.1 Six Drift Failure Modes
+Failure mode
+How it happens
+Prevention
+Stage pipeline violation
+New feature bypasses context_extractor or persona_loader to save a round trip
+Every inference path goes through all stages. Stage skip requires ADR.
+Scoring disconnected
+Annotation layer evaluates message quality instead of goal + recipient + persona
+Parameterization config is session source of truth. Rule engine consumes it. LLM arbitration only at confidence < 0.6.
+Distribution in product
+Social posting or AI-OS logic appears in apps/persona1-ext or apps/persona1-api
+Hard boundary: distribution lives exclusively in businesses/persona1. Zero imports in application kernel.
+Schema drift
+Branch output schema changes in BAML but UI render code not updated
+Schema changes require BAML update + migration + UI update + prompt update. All four in same PR.
+Doc/code divergence
+current-state.md says something is implemented but code runs a stub
+Every PR changing behavior includes docs/ update. current-state.md reviewed on every merge.
+Dependency sprawl
+New package added without ADR
+Every new package-level dependency requires ADR before PR merges.
+
+7.2 Mandatory PR Checklist
+Does this PR stay within its declared phase?
+If adding a new dependency: is the ADR written and merged first?
+If changing a prompt contract: are BAML schema, UI render code, and prompt all updated?
+If changing persona JSON structure: is the migration written and persona_updater prompt updated?
+If adding a scoring rule: is it in json-rules-engine, not in the annotation prompt?
+If touching distribution logic: does it stay in businesses/persona1?
+Is current-state.md still accurate?
+Does corepack pnpm test still pass?
+Is extension validation still green?
+Is Shadow DOM isolation intact?
+
+7.3 Canonical Pipeline Contract
+Stage
+Contract
+context_extractor
+Input: raw DOM. Output: ContextOutput (BAML-typed). Cached per session. Fallback: manual paste.
+parameterizer
+Input: PersonaProfile + ContextOutput + preset. Output: ScoringConfig (BAML-typed). Cached in Dexie by session_id. Drives annotation for entire session.
+persona_loader
+Input: user_id + ContextOutput. Output: calibrated PersonaProfile. Phase 4+: mem0 selective shard retrieval. Fallback: full profile blob.
+branch_generator
+Input: PersonaProfile + ContextOutput + draft + preset. Output: BranchTree (BAML-typed, exactly 3 branches). Prefetched 800ms after typing stops.
+annotation_engine
+Input: ScoringConfig + current draft. Output: AnnotationOutput (symbol + reason + confidence). Deterministic via json-rules-engine. Zero API calls. LLM arbitration only at confidence < 0.6.
+persona_updater (async)
+Input: PersonaProfile + interaction + outcome. Output: updated PersonaProfile. Never blocks UI. Fallback: deterministic update.
+mirror_trigger (async)
+Input: interaction log. Output: string[] insights. Fires at interaction_count % 25 === 0. Only surfaces patterns with 5+ data points.
+
+Section 8  ·  Implementation Order
+Phases 1-6 with exact exit conditions
+
+A phase is not done until its exit condition is met. Do not start the next phase until the current one is complete. Phase 1 is everything before the first real user.
+
+Phase 1 — Structural Foundation (this week)
+Task
+What to build
+Exit condition
+Shadow DOM isolation
+Mount all extension UI inside ShadowRoot. WXT createShadowRootUi pattern. All CSS scoped.
+Extension UI looks identical on Gmail, LinkedIn, Twitter, Notion, and a hostile CSS host page.
+BAML contracts
+Install @boundaryml/baml. Define ContextOutput, BranchTree, ScoringConfig, AnnotationOutput schemas. Generate TS clients. Replace raw JSON.parse calls.
+No UI crash from malformed LLM output. Branch output always matches schema or returns typed error.
+Dexie storage
+Install Dexie. Define all tables. Replace chrome.storage.local for persona, interactions, observations, mirror_insights, branch_cache, scoring_config_cache.
+Persona profile survives extension reload. Branch cache queryable by session_id + draft_hash.
+webext-bridge
+Install webext-bridge. Define typed message protocol in packages/ai-kernel/messages.ts. Replace all chrome.runtime.sendMessage calls.
+No untyped messages in codebase. TypeScript catches protocol mismatches at compile time.
+Motion language
+Install Motion. Dock spring open/close. Branch card stagger (60ms delay). Glyph scale pop. Selection confirmation flash. Keep AutoAnimate for quiet transitions.
+Opening branch tree with Cmd+Shift+Space feels deliberate and fast. Not bouncy. Not linear.
+Floating UI
+Install floating-ui. Replace hardcoded annotation positioning with floating-ui anchored to compose box bounding rect.
+Annotation glyph stays anchored through scroll, zoom, and responsive layout shifts on all six platforms.
+tinykeys
+Install tinykeys. Replace existing shortcut handlers. Scope to sidebar open state.
+All keyboard shortcuts work without propagating to host page.
+json-rules-engine + parameterization stub
+Install json-rules-engine. Build packages/scoring-engine. Stub ScoringConfig with hardcoded rules for date/pitch/negotiate presets.
+Annotation symbol changes meaningfully when draft changes. Blunder patterns return ?? correctly for each preset.
+Radix + shadcn components
+Install radix-ui/primitives + radix-ui/colors. Migrate branch cards and sidebar to shadcn components with dark mode.
+UI looks dark, dense, and consistent. No generic SaaS purple. Font is Geist Sans + Geist Mono.
+ADR-001 to ADR-016
+Write all Phase 1 ADRs in docs/adr/. Update current-state.md.
+Every Phase 1 package has a written ADR. current-state.md reflects actual code.
+
+Phase 2 — Real Learning Loop (week 2)
+Task
+What to build
+Exit condition
+Firebase Auth
+Enable Firebase Auth in GCP. Add firebase-admin to API. Replace local_hmac. Add sign-in UI to popup.
+New user can sign up, use 3 free analyses, pay, and use unlimited — all with real Firebase JWT.
+Real persona updater
+Implement persona_updater BAML function. Wire outcome capture → POST /v1/persona/update → inference → update Dexie + Cloud SQL.
+After 10 real interactions with outcome signals, persona JSON shows observable changes. Version increments.
+Real mirror trigger
+Implement mirror_trigger BAML function at interaction_count % 25. Enforce 5-point threshold.
+After 25 real interactions, at least one insight fires if threshold met. Appears in sidebar.
+Parameterization call
+Implement parameterizer BAML function. Fire when compose context detected. Cache ScoringConfig in Dexie by session_id.
+Scoring config generated within 2 seconds of compose context detection. Cached for session.
+Branch prefetch
+Trigger background branch_generator call 800ms after typing stops. Cache in Dexie branch_cache.
+Cmd+Shift+Space returns branches instantly from cache >80% of the time.
+
+Phase 3 — Context Hardening (week 2-3)
+Task
+What to build
+Exit condition
+transformers.js pre-classification
+Add @xenova/transformers to API. Run sentiment pre-classification on recipient last message.
+Context extraction LLM call receives pre-classified sentiment. Token count for extraction decreases.
+RecognizersText entities
+Add deterministic entity extraction for dates, amounts, deadlines.
+Scheduling cues and amounts extracted without LLM call.
+Annotation accuracy
+Connect ScoringConfig to real persona + recipient context. Retire stub hardcoded rules.
+Same draft gets ?? on cold pitch to stranger and ! on warm reconnect to colleague.
+Few-shot library
+Curate 50-100 examples per preset. Embed and load into pgvector table.
+Parameterization prompt retrieves relevant examples. Output quality improves on edge cases.
+
+Phase 4 — Memory Architecture (month 1, after 50 paying users)
+Task
+What to build
+Exit condition
+pgvector migration
+Add vector extension to Cloud SQL. Run persona_shards and few_shot_examples migrations.
+Migration runs without downtime. pgvector queries return in <100ms.
+mem0 integration
+Integrate mem0-ts in persona_loader. Replace full profile injection with selective shard retrieval.
+Tokens injected into branch_generator decreases 30% for users with 100+ interactions. No degradation in goal_alignment_score.
+
+Phase 5 — ELO System (month 1)
+Task
+What to build
+Exit condition
+openskill.js integration
+Add ELO columns to users table. Compute rating update on every outcome signal. Show in popup.
+Every user has visible rating that moves based on outcome + recipient difficulty. Scorecard shareable.
+
+Phase 6 — Branch Intelligence (month 2-3)
+Task
+What to build
+Exit condition
+LangGraphJS pipeline
+Migrate stage orchestration to LangGraphJS. Explicit graph with state persistence.
+Pipeline stages are explicit graph nodes. State is inspectable. Failures recoverable.
+Lookahead simulation
+Implement 1-turn recipient model call per branch. Score 2-move sequence.
+Predicted responses are inference outputs, not assertions. Chess tree is genuinely predictive.
+
+persona1 pre-implementation master document v2.0 — with full sources  ·  apps/persona1  ·  world1 monorepo  ·  March 2026

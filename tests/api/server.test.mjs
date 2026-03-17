@@ -32,7 +32,8 @@ test("api server exposes health and registration routes", async () => {
         webhookSecret: null
       }),
       authTokens: createLocalHmacAuthTokenService("test-secret"),
-      freeUses: 3
+      freeUses: 3,
+      firebaseProjectId: null
     },
     analyzer: null
   });

@@ -26,6 +26,16 @@ export function buildBranchGeneratorPrompt(input: {
   personaProfile: PersonaProfile;
   scoringConfig?: ScoringConfig | null;
   draftScore?: DraftScoreResult | null;
+  relevantMemories?: string[];
+  relevantExamples?: Array<{
+    id: string;
+    preset: string;
+    archetype: string | null;
+    scenario: string;
+    message: string;
+    outcome: string | null;
+    whyItWorked: string;
+  }>;
   voicePackId?: string | null;
   voicePackText?: string | null;
 }): PromptBundle {
@@ -76,9 +86,53 @@ export function buildBranchGeneratorPrompt(input: {
           `Voice pack instructions:\n${input.voicePackText?.trim() || "No explicit voice pack. Stay close to the persona profile."}`,
           `Sender profile context JSON: ${JSON.stringify(input.personaProfile)}`,
           `Current conversation context JSON: ${JSON.stringify(input.context)}`,
+          `Retrieved memory summaries JSON: ${JSON.stringify(input.relevantMemories || [])}`,
+          `Retrieved few-shot examples JSON: ${JSON.stringify(input.relevantExamples || [])}`,
           `Session scoring config JSON: ${JSON.stringify(input.scoringConfig || null)}`,
           `Local draft scoring JSON: ${JSON.stringify(input.draftScore || null)}`,
           `Draft: ${input.draft}`
+        ].join("\n\n")
+      }
+    ]
+  };
+}
+
+export function buildScoringParameterizationPrompt(input: {
+  preset: ConversationPreset;
+  context: RecipientContext;
+  personaProfile: PersonaProfile;
+  relevantExamples?: Array<{
+    id: string;
+    preset: string;
+    archetype: string | null;
+    scenario: string;
+    message: string;
+    outcome: string | null;
+    whyItWorked: string;
+  }>;
+}) {
+  return {
+    expectedContract: "scoring_config_v1" as const,
+    messages: [
+      {
+        role: "system" as const,
+        content: [
+          "You build the scoring configuration for persona1.",
+          "Return JSON only.",
+          "Name exact linguistic and structural patterns the deterministic rule layer can check.",
+          "The current conversation matters more than the broad persona profile.",
+          "Keep weights and thresholds numerically sane for a local deterministic evaluator.",
+          "Output schema:",
+          "{\"sessionKey\":string,\"primaryGoal\":string,\"toneTarget\":string,\"platform\":string,\"relationshipType\":string,\"recipientSensitivity\":0-1,\"weights\":{\"genericFollowUpPenalty\":number,\"hedgePenalty\":number,\"ambiguityPenalty\":number,\"clarityQuestionBonus\":number,\"concreteChoiceBonus\":number,\"nextStepBonus\":number,\"overlongPenalty\":number,\"warmthBonus\":number,\"pressurePenalty\":number},\"thresholds\":{\"brilliant\":number,\"good\":number,\"interesting\":number,\"dubious\":number,\"weak\":number}}"
+        ].join("\n")
+      },
+      {
+        role: "user" as const,
+        content: [
+          `Preset: ${input.preset}`,
+          `Persona profile JSON: ${JSON.stringify(input.personaProfile)}`,
+          `Recipient context JSON: ${JSON.stringify(input.context)}`,
+          `Relevant examples JSON: ${JSON.stringify(input.relevantExamples || [])}`
         ].join("\n\n")
       }
     ]
@@ -89,6 +143,16 @@ export function createAnalyzeResponse(input: {
   branchTree: BranchTree;
   scoringConfig?: ScoringConfig | null;
   draftAssessmentOverride?: DraftScoreResult | null;
+  relevantMemories?: string[];
+  relevantExamples?: Array<{
+    id: string;
+    preset: string;
+    archetype: string | null;
+    scenario: string;
+    message: string;
+    outcome: string | null;
+    whyItWorked: string;
+  }>;
   personaVersionUsed: number;
   model: string;
 }) {
@@ -112,6 +176,8 @@ export function createAnalyzeResponse(input: {
     primaryGoal: input.branchTree.primaryGoal,
     draftAssessment,
     branches: input.branchTree.branches,
+    relevantMemories: input.relevantMemories || [],
+    relevantExamples: input.relevantExamples || [],
     scoringSessionKey: input.draftAssessmentOverride?.sessionKey,
     scoringConfig: input.scoringConfig || undefined,
     personaVersionUsed: input.personaVersionUsed,

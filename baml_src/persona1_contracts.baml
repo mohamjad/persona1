@@ -19,6 +19,7 @@ class PersonaProfile {
   confidence float
   learningPhase string
   communicationDefaults CommunicationDefaults
+  performanceRating PerformanceRating
   observedPatterns ObservedPattern[]
   knownStrengths string[]
   knownWeaknesses string[]
@@ -26,6 +27,22 @@ class PersonaProfile {
   coldStartContext "dating" | "professional" | "general"
   lastUpdated string
   lastMirrorAt string?
+}
+
+class PerformanceRating {
+  mu float
+  sigma float
+  ordinal float
+  matches int
+}
+
+class StructuredContextFacts {
+  dates string[]
+  amounts string[]
+  numbers string[]
+  urls string[]
+  emails string[]
+  mentions string[]
 }
 
 class ContextOutput {
@@ -43,6 +60,11 @@ class ContextOutput {
   currentConversationSummary string
   recentMessages string[]
   conversationGoalHint string
+  structuredFacts StructuredContextFacts?
+  recipientSentiment "positive" | "neutral" | "negative"?
+  sentimentConfidence float?
+  dialogueState "warm_open" | "needs_clarity" | "pricing_friction" | "schedule_alignment" | "soft_rejection" | "low_signal"?
+  combinedSummary string?
 }
 
 class ScoringWeights {
@@ -100,6 +122,10 @@ class BranchOption {
   goalAlignmentScore int
   whyItWorks string
   risk string?
+  lookaheadSummary string?
+  lookaheadScore float?
+  simulationConfidence float?
+  simulationSource "deterministic" | "openrouter" | "langgraph"?
 }
 
 class BranchTree {
@@ -109,6 +135,16 @@ class BranchTree {
   primaryGoal string
   draftAssessment AnnotationOutput
   branches BranchOption[]
+}
+
+class RelevantExample {
+  id string
+  preset string
+  archetype string?
+  scenario string
+  message string
+  outcome string?
+  whyItWorked string
 }
 
 class PersonaInteraction {
@@ -157,7 +193,7 @@ function ContextExtractor(rawPage: string) -> ContextOutput {
   "#
 }
 
-function Parameterize(persona: PersonaProfile, context: ContextOutput, preset: string) -> ScoringConfig {
+function Parameterize(persona: PersonaProfile, context: ContextOutput, preset: string, examples: RelevantExample[]) -> ScoringConfig {
   client Persona1Router
   prompt #"
     Build the scoring configuration for this live conversation session.
@@ -171,11 +207,14 @@ function Parameterize(persona: PersonaProfile, context: ContextOutput, preset: s
     Preset:
     {{ preset }}
 
+    Relevant examples:
+    {{ examples }}
+
     {{ ctx.output_format }}
   "#
 }
 
-function GenerateBranches(persona: PersonaProfile, context: ContextOutput, draft: string, preset: string) -> BranchTree {
+function GenerateBranches(persona: PersonaProfile, context: ContextOutput, draft: string, preset: string, examples: RelevantExample[], memories: string[]) -> BranchTree {
   client Persona1Router
   prompt #"
     Model the board state of this conversation and return exactly three strategic branches.
@@ -188,6 +227,12 @@ function GenerateBranches(persona: PersonaProfile, context: ContextOutput, draft
 
     Preset:
     {{ preset }}
+
+    Relevant examples:
+    {{ examples }}
+
+    Relevant memories:
+    {{ memories }}
 
     Draft:
     {{ draft }}

@@ -31,6 +31,8 @@ test("local mirror insights require repeated signals", () => {
   const insights = deriveLocalMirrorInsights([
     { observedSignals: ["edited_before_send"] },
     { observedSignals: ["edited_before_send"] },
+    { observedSignals: ["edited_before_send"] },
+    { observedSignals: ["edited_before_send"] },
     { observedSignals: ["edited_before_send"] }
   ]);
 

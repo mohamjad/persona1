@@ -12,7 +12,7 @@ This document reconciles:
   - tone that does not adapt enough to the live conversation
   - an interaction model that still feels heavier than the product thesis
 
-It is the implementation plan to execute next.
+It began as the implementation plan to execute next. The current repo now contains the full vertical slice described here: scoring parameterization, deterministic annotation, Firebase-capable auth boundary, context enrichment, memory retrieval, rating, and LangGraph-backed branch intelligence. This document remains useful as the reconciliation record between the raw master doc and the shipped code.
 
 ## Assessment
 

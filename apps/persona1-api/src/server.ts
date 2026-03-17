@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import {
   AnalyzeRequestSchema,
@@ -26,9 +28,16 @@ import {
   type Persona1AppContext
 } from "./app.js";
 import type { Persona1RuntimeConfig } from "./config.js";
+import { enrichRecipientContext } from "../../../packages/context-engine/src/index.js";
+import { retrieveRelevantMemory } from "../../../packages/memory-engine/src/index.js";
+import type { FewShotExampleRecord, PersonaShardRecord } from "../../../packages/db/src/index.js";
 
 const RegisterRequestSchema = z.object({
   email: z.string().email(),
+  coldStartContext: z.enum(["dating", "professional", "general"]).default("general")
+});
+
+const AuthSessionRequestSchema = z.object({
   coldStartContext: z.enum(["dating", "professional", "general"]).default("general")
 });
 
@@ -105,6 +114,20 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
           userId: user.userId,
           coldStartContext: input.coldStartContext
         });
+        await syncUserLearningState({
+          config: options.config,
+          userId: user.userId,
+          profile: persona,
+          now: context.now()
+        });
+        await options.config.repository.savePersonaShards(
+          user.userId,
+          buildPersonaShards({
+            userId: user.userId,
+            profile: persona,
+            now: context.now()
+          })
+        );
 
         sendJson(response, 200, {
           userId: user.userId,
@@ -114,6 +137,63 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
             userId: user.userId,
             email: user.email
           }),
+          authMode: options.config.authMode,
+          personaProfile: persona
+        });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/v1/auth/session") {
+        const auth = requireAuthorizedUser({
+          context,
+          authorizationHeader: request.headers.authorization
+        });
+        const authResult = await auth;
+        if (!authResult.ok) {
+          sendJson(response, authResult.statusCode, { error: authResult.error });
+          return;
+        }
+
+        const input = AuthSessionRequestSchema.parse(await readJsonBody(request));
+        const existing =
+          (await options.config.repository.getUserByFirebaseUid(authResult.user.userId)) ||
+          (await options.config.repository.getUserByEmail(authResult.user.email));
+        const user = await ensureUser({
+          context,
+          userId: existing?.userId ?? createRegisteredUserId(),
+          email: authResult.user.email
+        });
+        if (user.firebaseUid !== authResult.user.userId || user.authMode !== options.config.authMode) {
+          await options.config.repository.saveUser({
+            ...user,
+            email: authResult.user.email,
+            firebaseUid: authResult.user.userId,
+            authMode: options.config.authMode,
+            updatedAt: context.now()
+          });
+        }
+        const persona = await getOrCreatePersona({
+          context,
+          userId: user.userId,
+          coldStartContext: input.coldStartContext
+        });
+        await syncUserLearningState({
+          config: options.config,
+          userId: user.userId,
+          profile: persona,
+          now: context.now()
+        });
+        await options.config.repository.savePersonaShards(
+          user.userId,
+          buildPersonaShards({
+            userId: user.userId,
+            profile: persona,
+            now: context.now()
+          })
+        );
+        sendJson(response, 200, {
+          userId: user.userId,
+          email: authResult.user.email,
           authMode: options.config.authMode,
           personaProfile: persona
         });
@@ -133,7 +213,49 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
           context,
           userId: input.userId
         });
-        const analyzed = await options.analyzer.analyze(input);
+        const personaProfile =
+          input.personaProfile ??
+          (await getOrCreatePersona({
+            context,
+            userId: user.userId,
+            coldStartContext: input.coldStartContext ?? "general"
+          }));
+        await seedFewShotExamplesIfNeeded(options.config);
+        const [interactions, personaShards, repositoryExamples, enrichedContext] = await Promise.all([
+          options.config.repository.listInteractions(user.userId),
+          options.config.repository.listPersonaShards(user.userId),
+          options.config.repository.listFewShotExamples({
+            preset: input.preset,
+            recipientArchetype: input.context.relationshipType
+          }),
+          enrichRecipientContext(input.context)
+        ]);
+        const memoryBundle = await retrieveRelevantMemory({
+          rootDir: "C:/Users/moham/persona1",
+          userId: user.userId,
+          preset: input.preset,
+          draft: input.draft,
+          context: {
+            ...input.context,
+            ...enrichedContext
+          },
+          personaProfile,
+          interactions,
+          personaShards,
+          repositoryExamples,
+          mem0ApiKey: process.env.MEM0_API_KEY?.trim() || null,
+          mem0ProjectId: process.env.MEM0_PROJECT_ID?.trim() || null
+        });
+        const analyzed = await options.analyzer.analyze({
+          ...input,
+          personaProfile,
+          context: {
+            ...input.context,
+            ...enrichedContext
+          },
+          relevantMemories: memoryBundle.relevantMemories,
+          relevantExamples: memoryBundle.relevantExamples
+        });
         const output = AnalyzeResponseSchema.parse(analyzed);
         if (!input.prefetch) {
           await options.config.repository.incrementUsage(user.userId, context.now());
@@ -182,10 +304,19 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
               }),
               provider: "deterministic" as const
             };
+        const mirrorInsights = shouldSurfaceMirrorInsights(updated.profile)
+          ? updated.mirrorInsights.filter((insight) => insight.evidenceCount >= 5)
+          : [];
         await options.config.repository.savePersona({
           userId: input.userId,
           profile: updated.profile,
           updatedAt: now
+        });
+        await syncUserLearningState({
+          config: options.config,
+          userId: input.userId,
+          profile: updated.profile,
+          now
         });
         await options.config.repository.saveInteraction(
           toInteractionRecord({
@@ -200,7 +331,15 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
           input.userId,
           toMirrorInsightRecords({
             userId: input.userId,
-            insights: updated.mirrorInsights,
+            insights: mirrorInsights,
+            now
+          })
+        );
+        await options.config.repository.savePersonaShards(
+          input.userId,
+          buildPersonaShards({
+            userId: input.userId,
+            profile: updated.profile,
             now
           })
         );
@@ -209,7 +348,7 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
           200,
           PersonaUpdateResponseSchema.parse({
             updatedPersona: updated.profile,
-            mirrorInsights: updated.mirrorInsights,
+            mirrorInsights,
             provider: updated.provider
           })
         );
@@ -245,6 +384,12 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
           profile: mergedPersona,
           updatedAt: now
         });
+        await syncUserLearningState({
+          config: options.config,
+          userId: input.userId,
+          profile: mergedPersona,
+          now
+        });
         for (const interaction of input.localInteractions) {
           await options.config.repository.saveInteraction(
             toInteractionRecord({
@@ -266,6 +411,14 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
             }))
           );
         }
+        await options.config.repository.savePersonaShards(
+          input.userId,
+          buildPersonaShards({
+            userId: input.userId,
+            profile: mergedPersona,
+            now
+          })
+        );
 
         sendJson(response, 200, {
           userId: input.userId,
@@ -420,6 +573,165 @@ export function createPersona1ApiServer(options: Persona1ApiServerOptions) {
       sendJson(response, 500, { error: message });
     }
   });
+}
+
+let seedFewShotExamplesPromise: Promise<void> | null = null;
+
+async function seedFewShotExamplesIfNeeded(config: Persona1RuntimeConfig) {
+  if (seedFewShotExamplesPromise) {
+    return seedFewShotExamplesPromise;
+  }
+
+  seedFewShotExamplesPromise = (async () => {
+    const existing = await config.repository.listFewShotExamples();
+    if (existing.length > 0) {
+      return;
+    }
+
+    const sourcePath = path.resolve("C:/Users/moham/persona1/businesses/persona1/few-shot/examples.json");
+    const raw = await fs.readFile(sourcePath, "utf8").catch(() => "[]");
+    const examples = JSON.parse(raw) as Array<{
+      id: string;
+      preset: string;
+      archetype?: string;
+      scenario: string;
+      message: string;
+      outcome?: string;
+      whyItWorked: string;
+    }>;
+
+    await config.repository.saveFewShotExamples(
+      examples.map((example) => ({
+        exampleId: example.id,
+        preset: example.preset,
+        recipientArchetype: example.archetype ?? null,
+        situationDescription: example.scenario,
+        exampleContent: example.message,
+        outcomeSignal: example.outcome ?? null,
+        source: example.whyItWorked,
+        embedding: null,
+        createdAt: new Date().toISOString()
+      }))
+    );
+  })();
+
+  return seedFewShotExamplesPromise;
+}
+
+function shouldSurfaceMirrorInsights(profile: { interactionCount: number }) {
+  return profile.interactionCount > 0 && profile.interactionCount % 25 === 0;
+}
+
+async function syncUserLearningState(input: {
+  config: Persona1RuntimeConfig;
+  userId: string;
+  profile: { performanceRating?: { mu: number; sigma: number; ordinal: number; matches: number } };
+  now: string;
+}) {
+  const user = await input.config.repository.getUser(input.userId);
+  if (!user) {
+    return;
+  }
+
+  await input.config.repository.saveUser({
+    ...user,
+    performanceMu: input.profile.performanceRating?.mu ?? user.performanceMu,
+    performanceSigma: input.profile.performanceRating?.sigma ?? user.performanceSigma,
+    performanceOrdinal: input.profile.performanceRating?.ordinal ?? user.performanceOrdinal,
+    performanceMatches: input.profile.performanceRating?.matches ?? user.performanceMatches,
+    updatedAt: input.now
+  });
+}
+
+function buildPersonaShards(input: {
+  userId: string;
+  profile: {
+    communicationDefaults: Record<string, string>;
+    observedPatterns: Array<{ pattern: string; count: number; confidence: number }>;
+    knownStrengths: string[];
+    knownWeaknesses: string[];
+    platformCalibration: Record<string, { toneShift: string; confidence: number }>;
+  };
+  now: string;
+}): PersonaShardRecord[] {
+  const shards: PersonaShardRecord[] = [];
+  const pushShard = (shard: Omit<PersonaShardRecord, "userId" | "createdAt" | "updatedAt">) => {
+    shards.push({
+      ...shard,
+      userId: input.userId,
+      createdAt: input.now,
+      updatedAt: input.now
+    });
+  };
+
+  pushShard({
+    shardId: `${input.userId}_defaults`,
+    shardType: "defaults",
+    content: JSON.stringify(input.profile.communicationDefaults),
+    embedding: null,
+    platform: null,
+    recipientArchetype: null,
+    confidence: 0.6,
+    dataPointCount: 1
+  });
+
+  for (const pattern of input.profile.observedPatterns.slice(0, 12)) {
+    pushShard({
+      shardId: `${input.userId}_pattern_${slugify(pattern.pattern)}`,
+      shardType: "pattern",
+      content: `${pattern.pattern} (count=${pattern.count}, confidence=${pattern.confidence})`,
+      embedding: null,
+      platform: null,
+      recipientArchetype: null,
+      confidence: pattern.confidence,
+      dataPointCount: pattern.count
+    });
+  }
+
+  for (const strength of input.profile.knownStrengths.slice(0, 4)) {
+    pushShard({
+      shardId: `${input.userId}_strength_${slugify(strength)}`,
+      shardType: "strength",
+      content: strength,
+      embedding: null,
+      platform: null,
+      recipientArchetype: null,
+      confidence: 0.7,
+      dataPointCount: 1
+    });
+  }
+
+  for (const weakness of input.profile.knownWeaknesses.slice(0, 4)) {
+    pushShard({
+      shardId: `${input.userId}_weakness_${slugify(weakness)}`,
+      shardType: "weakness",
+      content: weakness,
+      embedding: null,
+      platform: null,
+      recipientArchetype: null,
+      confidence: 0.65,
+      dataPointCount: 1
+    });
+  }
+
+  for (const [platform, calibration] of Object.entries(input.profile.platformCalibration).slice(0, 6)) {
+    pushShard({
+      shardId: `${input.userId}_platform_${slugify(platform)}`,
+      shardType: "platform",
+      content: calibration.toneShift,
+      embedding: null,
+      platform,
+      recipientArchetype: null,
+      confidence: calibration.confidence,
+      dataPointCount: 1
+    });
+  }
+
+  return shards;
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48) || "entry";
 }
 
 function normalizeMirrorInsights(

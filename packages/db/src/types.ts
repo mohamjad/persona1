@@ -6,9 +6,14 @@ export type AuthMode = "local_hmac" | "firebase_jwt";
 export interface UserRecord {
   userId: string;
   email: string;
+  firebaseUid: string | null;
   plan: UserPlan;
   authMode: AuthMode;
   usageCount: number;
+  performanceMu: number | null;
+  performanceSigma: number | null;
+  performanceOrdinal: number | null;
+  performanceMatches: number | null;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   createdAt: string;
@@ -34,6 +39,7 @@ export interface InteractionRecord {
   outcome: "positive" | "neutral" | "negative" | "unknown";
   observedSignals: string[];
   metadata: Record<string, unknown>;
+  embedding: number[] | null;
   createdAt: string;
 }
 
@@ -47,4 +53,30 @@ export interface MirrorInsightRecord {
   createdAt: string;
   updatedAt: string;
   status: "active" | "dismissed";
+}
+
+export interface PersonaShardRecord {
+  shardId: string;
+  userId: string;
+  shardType: string;
+  content: string;
+  embedding: number[] | null;
+  platform: string | null;
+  recipientArchetype: string | null;
+  confidence: number;
+  dataPointCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FewShotExampleRecord {
+  exampleId: string;
+  preset: string;
+  recipientArchetype: string | null;
+  situationDescription: string;
+  exampleContent: string;
+  outcomeSignal: string | null;
+  source: string | null;
+  embedding: number[] | null;
+  createdAt: string;
 }

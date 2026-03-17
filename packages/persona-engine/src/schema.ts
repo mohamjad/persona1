@@ -12,6 +12,13 @@ export const CommunicationDefaultsSchema = z.object({
   warmthBaseline: z.string()
 });
 
+export const PerformanceRatingSchema = z.object({
+  mu: z.number(),
+  sigma: z.number(),
+  ordinal: z.number(),
+  matches: z.number().int().nonnegative()
+});
+
 export const ObservedPatternSchema = z.object({
   pattern: z.string().min(1),
   count: z.number().int().nonnegative(),
@@ -60,6 +67,7 @@ export const PersonaProfileSchema = z.object({
   confidence: z.number().min(0).max(1),
   learningPhase: LearningPhaseSchema,
   communicationDefaults: CommunicationDefaultsSchema,
+  performanceRating: PerformanceRatingSchema,
   observedPatterns: z.array(ObservedPatternSchema),
   knownStrengths: z.array(z.string()),
   knownWeaknesses: z.array(z.string()),
@@ -77,3 +85,4 @@ export type OutcomeLabel = z.infer<typeof OutcomeLabelSchema>;
 export type PersonaProfile = z.infer<typeof PersonaProfileSchema>;
 export type PersonaInteraction = z.infer<typeof PersonaInteractionSchema>;
 export type MirrorInsight = z.infer<typeof MirrorInsightSchema>;
+export type PerformanceRating = z.infer<typeof PerformanceRatingSchema>;

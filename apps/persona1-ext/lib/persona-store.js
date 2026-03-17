@@ -1,5 +1,6 @@
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from "./storage-keys.js";
 import { deriveLocalMirrorInsights } from "./mirror.js";
+import { defaultPerformanceRating, updatePerformanceRating } from "./rating.js";
 import {
   bulkSetMeta,
   ensureDbInitialized,
@@ -105,8 +106,12 @@ export async function recordOutcomeAndUpdatePersona(interaction) {
     ...persona,
     version: persona.version + 1,
     interactionCount: persona.interactionCount + 1,
+    performanceRating: updatePerformanceRating({
+      persona,
+      interaction
+    }),
     learningPhase:
-      persona.interactionCount + 1 >= 24
+      persona.interactionCount + 1 >= 25
         ? "mirror_activation"
         : persona.interactionCount + 1 >= 8
           ? "active_calibration"
@@ -114,10 +119,14 @@ export async function recordOutcomeAndUpdatePersona(interaction) {
     observedPatterns: nextObservedPatterns.sort((left, right) => right.count - left.count).slice(0, 24),
     confidence: Math.min(Math.max(persona.confidence + (interaction.outcome === "positive" ? 0.03 : 0.01), 0.05), 0.95),
     lastUpdated: now,
-    lastMirrorAt: persona.interactionCount + 1 >= 24 ? now : persona.lastMirrorAt
+    lastMirrorAt:
+      persona.interactionCount + 1 >= 25 && (persona.interactionCount + 1) % 25 === 0 ? now : persona.lastMirrorAt
   };
 
-  const mirrorInsights = deriveLocalMirrorInsights([...(state.observationQueue || []), interaction]);
+  const mirrorInsights =
+    nextPersona.interactionCount % 25 === 0
+      ? deriveLocalMirrorInsights([...(state.observationQueue || []), interaction])
+      : [];
 
   await setMetaValue(STORAGE_KEYS.persona, nextPersona);
   await replaceMirrorInsights(mirrorInsights);
@@ -135,6 +144,7 @@ function createBootstrapPersona(coldStartContext) {
     confidence: 0.2,
     learningPhase: "observation",
     communicationDefaults: buildDefaults(coldStartContext),
+    performanceRating: defaultPerformanceRating(),
     observedPatterns: [],
     knownStrengths: [],
     knownWeaknesses: [],

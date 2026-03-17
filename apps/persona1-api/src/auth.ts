@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 
 interface AuthPayload {
   userId: string;
@@ -49,9 +51,15 @@ export function createLocalHmacAuthTokenService(secret: string): AuthTokenServic
 
 export function createFirebaseJwtVerifier(options: {
   projectId: string;
+  serviceAccountJson?: string | null;
   fetchImpl?: typeof fetch;
 }): AuthTokenService {
   const fetchImpl = options.fetchImpl ?? fetch;
+  const app = getOrCreateFirebaseApp({
+    projectId: options.projectId,
+    serviceAccountJson: options.serviceAccountJson ?? null
+  });
+  const auth = app ? getAuth(app) : null;
 
   return {
     mode: "firebase_jwt",
@@ -62,6 +70,23 @@ export function createFirebaseJwtVerifier(options: {
     },
 
     async verify(token) {
+      if (auth) {
+        try {
+          const decoded = await auth.verifyIdToken(token);
+          if (typeof decoded.uid !== "string" || typeof decoded.email !== "string") {
+            return null;
+          }
+
+          return {
+            userId: decoded.uid,
+            email: decoded.email,
+            issuedAt: new Date(Number(decoded.iat ?? 0) * 1000 || Date.now()).toISOString()
+          };
+        } catch {
+          return null;
+        }
+      }
+
       const parts = token.split(".");
       if (parts.length !== 3) {
         return null;
@@ -114,6 +139,47 @@ export function createFirebaseJwtVerifier(options: {
       };
     }
   };
+}
+
+function getOrCreateFirebaseApp(input: {
+  projectId: string;
+  serviceAccountJson: string | null;
+}) {
+  try {
+    const existing = getApps().find((app) => app.name === `persona1-${input.projectId}`);
+    if (existing) {
+      return existing;
+    }
+
+    if (input.serviceAccountJson) {
+      const parsed = JSON.parse(input.serviceAccountJson) as {
+        project_id?: string;
+        client_email?: string;
+        private_key?: string;
+      };
+      return initializeApp(
+        {
+          credential: cert({
+            projectId: parsed.project_id ?? input.projectId,
+            clientEmail: parsed.client_email ?? "",
+            privateKey: parsed.private_key ?? ""
+          }),
+          projectId: parsed.project_id ?? input.projectId
+        },
+        `persona1-${input.projectId}`
+      );
+    }
+
+    return initializeApp(
+      {
+        credential: applicationDefault(),
+        projectId: input.projectId
+      },
+      `persona1-${input.projectId}`
+    );
+  } catch {
+    return null;
+  }
 }
 
 async function fetchFirebaseCertificates(fetchImpl: typeof fetch) {

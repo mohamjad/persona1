@@ -17,6 +17,7 @@ export function deriveCommunicationScorecard(input) {
     strategicDiscipline: clamp(Math.round((selectedRecommended / totalSelections) * 100), 10, 98),
     landingRate: clamp(Math.round((positive / totalOutcomes) * 100), 0, 100),
     volatility: clamp(Math.round((negative / totalOutcomes) * 100), 0, 100),
+    boardRating: Math.round(persona?.performanceRating?.ordinal || 0),
     learningPhase: persona?.learningPhase || "observation",
     headline: buildHeadline({
       positive,

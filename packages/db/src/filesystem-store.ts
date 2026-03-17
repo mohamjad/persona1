@@ -2,9 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Persona1Repository } from "./repository.js";
 import type {
+  FewShotExampleRecord,
   InteractionRecord,
   MirrorInsightRecord,
   PersonaRecord,
+  PersonaShardRecord,
   UserRecord
 } from "./types.js";
 
@@ -13,6 +15,8 @@ interface FileState {
   personas: PersonaRecord[];
   interactions: InteractionRecord[];
   mirrorInsights: MirrorInsightRecord[];
+  personaShards: PersonaShardRecord[];
+  fewShotExamples: FewShotExampleRecord[];
 }
 
 export interface FilesystemPersona1RepositoryOptions {
@@ -36,6 +40,11 @@ export class FilesystemPersona1Repository implements Persona1Repository {
   async getUserByEmail(email: string) {
     const state = await this.#readState();
     return state.users.find((user) => user.email.toLowerCase() === email.toLowerCase()) ?? null;
+  }
+
+  async getUserByFirebaseUid(firebaseUid: string) {
+    const state = await this.#readState();
+    return state.users.find((user) => user.firebaseUid === firebaseUid) ?? null;
   }
 
   async saveUser(user: UserRecord) {
@@ -111,6 +120,46 @@ export class FilesystemPersona1Repository implements Persona1Repository {
     return state.mirrorInsights.filter((insight) => insight.userId === userId);
   }
 
+  async savePersonaShards(userId: string, shards: PersonaShardRecord[]) {
+    const state = await this.#readState();
+    state.personaShards = state.personaShards.filter((shard) => shard.userId !== userId);
+    state.personaShards.push(...shards);
+    await this.#writeState(state);
+  }
+
+  async listPersonaShards(userId: string) {
+    const state = await this.#readState();
+    return state.personaShards.filter((shard) => shard.userId === userId);
+  }
+
+  async saveFewShotExamples(examples: FewShotExampleRecord[]) {
+    const state = await this.#readState();
+    const byId = new Map(state.fewShotExamples.map((example) => [example.exampleId, example]));
+    for (const example of examples) {
+      byId.set(example.exampleId, example);
+    }
+    state.fewShotExamples = [...byId.values()];
+    await this.#writeState(state);
+  }
+
+  async listFewShotExamples(filters?: { preset?: string; recipientArchetype?: string | null }) {
+    const state = await this.#readState();
+    return state.fewShotExamples.filter((example) => {
+      if (filters?.preset && example.preset !== filters.preset) {
+        return false;
+      }
+      if (
+        filters &&
+        "recipientArchetype" in filters &&
+        filters.recipientArchetype !== undefined &&
+        example.recipientArchetype !== filters.recipientArchetype
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }
+
   async #readState(): Promise<FileState> {
     await fs.mkdir(this.#rootDir, { recursive: true });
 
@@ -118,10 +167,22 @@ export class FilesystemPersona1Repository implements Persona1Repository {
       const raw = await fs.readFile(this.#statePath, "utf8");
       const parsed = JSON.parse(raw) as FileState;
       return {
-        users: parsed.users ?? [],
+        users: (parsed.users ?? []).map((user) => ({
+          ...user,
+          firebaseUid: user.firebaseUid ?? null,
+          performanceMu: user.performanceMu ?? null,
+          performanceSigma: user.performanceSigma ?? null,
+          performanceOrdinal: user.performanceOrdinal ?? null,
+          performanceMatches: user.performanceMatches ?? null
+        })),
         personas: parsed.personas ?? [],
-        interactions: parsed.interactions ?? [],
-        mirrorInsights: parsed.mirrorInsights ?? []
+        interactions: (parsed.interactions ?? []).map((interaction) => ({
+          ...interaction,
+          embedding: interaction.embedding ?? null
+        })),
+        mirrorInsights: parsed.mirrorInsights ?? [],
+        personaShards: parsed.personaShards ?? [],
+        fewShotExamples: parsed.fewShotExamples ?? []
       };
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
@@ -130,7 +191,9 @@ export class FilesystemPersona1Repository implements Persona1Repository {
           users: [],
           personas: [],
           interactions: [],
-          mirrorInsights: []
+          mirrorInsights: [],
+          personaShards: [],
+          fewShotExamples: []
         };
       }
 

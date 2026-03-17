@@ -35,13 +35,13 @@ test("persona update increments version and interaction counters", () => {
   assert.match(result.profile.platformCalibration.linkedin.toneShift, /landing|credibility/);
 });
 
-test("mirror insights only surface after repeated evidence", () => {
+test("mirror insights only surface after stronger repeated evidence", () => {
   let persona = createBootstrapPersonaProfile({
     coldStartContext: "general",
     now: "2026-03-16T00:00:00.000Z"
   });
 
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     persona = applyDeterministicPersonaUpdate({
       currentProfile: persona,
       interaction: {
