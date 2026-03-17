@@ -41,18 +41,19 @@ Implemented now:
 
 Extension capabilities now implemented:
 
-- cold-start selection
+- automatic cold-start inference on first live analyze
 - LinkedIn compose extraction
 - Gmail compose extraction
 - X DM extraction
 - Slack extraction
 - dating-app extraction
 - fallback extraction
-- inline chess tree rendering anchored to the active compose box
+- compact inline chess tree rendering anchored to the active compose box
+- circular move icon anchored directly to the draft surface
 - keyboard-first analysis with `Ctrl/Cmd+Shift+Space`
 - chess-style draft annotations and branch annotations
 - option insertion into the active compose box
-- full preset catalog in the live UI
+- internal preset inference without exposing a preset picker in the live UI
 - local usage gate after three uses
 - local observation logging
 - local persona storage

@@ -8,7 +8,7 @@ This repo is no longer a thin scaffold.
 
 The currently implemented product path includes:
 
-- Chrome extension inline compose HUD with cold start, live compose detection, keyboard-first analysis, chess-style draft annotations, branch rendering, option insertion, outcome capture, mirror surfacing, and local scorecard output
+- Chrome extension inline compose HUD with live compose detection, auto-inferred context mode, keyboard-first analysis, a circular move icon, compact branch rendering, option insertion, outcome capture, mirror surfacing, and local scorecard output
 - multi-platform extraction across LinkedIn, Gmail, X DMs, Slack, dating-app surfaces, and fallback compose targets
 - OpenRouter-backed analysis with strict contract parsing and provider-backed persona update and mirror inference
 - deterministic local/server fallback behavior for persona evolution when provider paths fail
@@ -50,7 +50,7 @@ The current product direction is:
 
 The current live implementation is local-first by default, with server-backed sync, billing, and durable storage available when runtime credentials are supplied.
 
-The active MVP UI is an injected inline compose HUD rather than Chrome's native side panel. The main interaction is: focus a draft, press `Ctrl/Cmd+Shift+Space`, inspect the move tree in place, then hit `1`, `2`, or `3` to apply a move.
+The active MVP UI is an injected inline compose HUD rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the compact move tree in place, then hit `1`, `2`, or `3` to apply a move. Cold start and preset selection are inferred from context instead of being exposed in the normal flow.
 
 ## Local Runtime
 

@@ -19,7 +19,6 @@ const CMD = {
   collapse: "collapse_sidebar"
 };
 
-const PRESETS = ["date", "pitch", "negotiate", "apologize", "reconnect", "confront", "close", "decline"];
 const ROOT_ATTR = "data-persona1-root";
 const alreadyLoaded = Boolean(globalThis.__persona1ContentScriptLoaded);
 
@@ -252,12 +251,6 @@ async function openHud(input = {}) {
   await loadExtensionState();
   renderUi();
 
-  if (!state.extensionState?.onboardingDone) {
-    state.pendingAnalyzeAfterOnboarding = analyzeImmediately;
-    renderUi();
-    return;
-  }
-
   if (analyzeImmediately) {
     await analyzeCurrentDraft();
   }
@@ -300,10 +293,35 @@ function chooseDefaultPreset(extensionState) {
   return "pitch";
 }
 
+function inferPreset(context, draft, coldStartContext) {
+  const lower = String(draft || "").toLowerCase();
+
+  if (/\b(sorry|apologize|my fault|shouldn't have)\b/.test(lower)) {
+    return "apologize";
+  }
+  if (/\b(reconnect|been a while|long time|catch up)\b/.test(lower)) {
+    return "reconnect";
+  }
+  if (/\b(no thanks|not interested|won't be able|can't do)\b/.test(lower)) {
+    return "decline";
+  }
+  if (/\b(price|terms|budget|rate|comp|offer)\b/.test(lower)) {
+    return "negotiate";
+  }
+  if (/\b(call|meeting|demo|proposal|summary|fit|idea|product)\b/.test(lower)) {
+    return "pitch";
+  }
+  if (context?.relationshipType === "romantic" || coldStartContext === "dating") {
+    return "date";
+  }
+  return coldStartContext === "professional" ? "pitch" : "reconnect";
+}
+
 async function analyzeCurrentDraft() {
   await loadExtensionState();
   const draft = normalizeComposeValue(state.currentComposeTarget).trim();
   state.lastDraft = draft;
+  state.activePreset = inferPreset(state.currentContext, draft, state.extensionState?.coldStartContext || "general");
 
   if (!draft) {
     state.error = "write a draft first.";
@@ -361,39 +379,6 @@ async function analyzeCurrentDraft() {
   } finally {
     state.isAnalyzing = false;
     renderUi();
-  }
-}
-
-async function chooseColdStart(coldStartContext) {
-  const response = await chrome.runtime.sendMessage({
-    type: MSG.setColdStartContext,
-    coldStartContext
-  });
-
-  if (!response?.ok) {
-    state.error = response?.error || "could not save the starting context.";
-    renderUi();
-    return;
-  }
-
-  state.extensionState = {
-    ...(state.extensionState || {}),
-    onboardingDone: true,
-    coldStartContext,
-    userId: response.userId,
-    persona: response.persona,
-    usageCount: state.extensionState?.usageCount || 0,
-    plan: state.extensionState?.plan || "free",
-    mirrorInsights: state.extensionState?.mirrorInsights || []
-  };
-  state.activePreset = chooseDefaultPreset(state.extensionState);
-  state.error = "";
-  state.status = "cold start saved.";
-  renderUi();
-
-  if (state.pendingAnalyzeAfterOnboarding) {
-    state.pendingAnalyzeAfterOnboarding = false;
-    await analyzeCurrentDraft();
   }
 }
 
@@ -514,42 +499,30 @@ function ensureRoot() {
   style.textContent = `
     :host, * { box-sizing: border-box; }
     [data-p1-shell="true"] { position: fixed; inset: 0; pointer-events: none; font: 400 13px/1.45 ui-sans-serif, system-ui, sans-serif; color: #171411; }
-    [data-p1-launcher="true"] { position: fixed; pointer-events: auto; display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 12px; border: 1px solid rgba(22, 18, 13, 0.15); background: rgba(255, 251, 244, 0.96); color: #171411; box-shadow: 0 12px 30px rgba(22, 18, 13, 0.12); cursor: pointer; border-radius: 10px; }
-    [data-p1-launcher="true"] strong { font-size: 12px; }
-    [data-p1-launcher="true"] span { font-size: 11px; color: #6a6054; }
-    [data-p1-badge="true"] { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 22px; padding: 0 7px; border-radius: 6px; border: 1px solid rgba(22, 18, 13, 0.12); background: #171411; color: #fffaf3; font-weight: 700; letter-spacing: 0.01em; }
+    [data-p1-launcher="true"] { position: fixed; pointer-events: auto; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 1px solid rgba(22, 18, 13, 0.16); background: rgba(255, 251, 244, 0.98); color: #171411; box-shadow: 0 10px 28px rgba(22, 18, 13, 0.12); cursor: pointer; border-radius: 999px; }
+    [data-p1-badge="true"] { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px; border: 1px solid rgba(22, 18, 13, 0.12); background: #171411; color: #fffaf3; font-weight: 700; letter-spacing: 0.01em; }
     [data-p1-badge-tone="good"] { background: #163a2d; color: #effff8; }
     [data-p1-badge-tone="risky"] { background: #6a241a; color: #fff6f2; }
     [data-p1-badge-tone="neutral"] { background: #5d4a20; color: #fff8e8; }
-    [data-p1-hud="true"] { position: fixed; pointer-events: auto; width: min(520px, calc(100vw - 24px)); border: 1px solid rgba(22, 18, 13, 0.16); background: rgba(255, 250, 242, 0.98); box-shadow: 0 24px 80px rgba(22, 18, 13, 0.18); border-radius: 14px; overflow: hidden; }
-    [data-p1-header="true"] { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px 12px; border-bottom: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.65); }
-    [data-p1-title="true"] { margin: 0; font-size: 16px; font-weight: 700; }
-    [data-p1-muted="true"] { margin: 0; color: #6a6054; font-size: 11px; }
-    [data-p1-body="true"] { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px; max-height: min(72vh, 720px); overflow: auto; }
-    [data-p1-card="true"] { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.72); border-radius: 12px; }
+    [data-p1-hud="true"] { position: fixed; pointer-events: auto; width: min(420px, calc(100vw - 24px)); border: 1px solid rgba(22, 18, 13, 0.14); background: rgba(255, 252, 246, 0.98); box-shadow: 0 20px 52px rgba(22, 18, 13, 0.16); border-radius: 12px; overflow: hidden; }
+    [data-p1-header="true"] { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid rgba(22, 18, 13, 0.06); background: rgba(255,255,255,0.62); }
+    [data-p1-body="true"] { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; max-height: min(48vh, 360px); overflow: auto; }
+    [data-p1-card="true"] { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.72); border-radius: 10px; }
     [data-p1-card="true"][data-tone="error"] { border-color: rgba(140, 43, 27, 0.26); background: #fff2ef; color: #7e1e10; }
     [data-p1-card="true"][data-tone="status"] { background: #fffdf8; }
     [data-p1-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-    [data-p1-context-grid="true"] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-    [data-p1-mini="true"] { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.85); border: 1px solid rgba(22, 18, 13, 0.06); }
-    [data-p1-mini="true"] label { font-size: 10px; color: #6a6054; letter-spacing: 0.06em; text-transform: uppercase; }
-    [data-p1-mini="true"] strong { font-size: 12px; }
-    [data-p1-preset-row="true"] { display: flex; flex-wrap: wrap; gap: 6px; }
-    [data-p1-chip="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: #fffef9; color: #171411; border-radius: 999px; padding: 6px 10px; font: 600 11px/1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
-    [data-p1-chip="true"][data-selected="true"] { background: #171411; color: #fffaf3; border-color: #171411; }
     [data-p1-branches="true"] { display: flex; flex-direction: column; gap: 8px; }
-    [data-p1-branch-card="true"] { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid rgba(22, 18, 13, 0.08); background: #fffef9; cursor: pointer; }
+    [data-p1-branch-card="true"] { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 10px; border: 1px solid rgba(22, 18, 13, 0.08); background: #fffef9; cursor: pointer; }
     [data-p1-branch-card="true"][data-selected="true"] { border-color: rgba(22, 18, 13, 0.3); box-shadow: inset 0 0 0 1px rgba(22, 18, 13, 0.08); }
     [data-p1-branch-card="true"][data-recommended="true"] { background: #f7f0e5; }
     [data-p1-annotation-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    [data-p1-move-label="true"] { font-size: 13px; font-weight: 700; }
-    [data-p1-message="true"] { margin: 0; white-space: pre-wrap; font-size: 14px; line-height: 1.42; }
-    [data-p1-small="true"] { margin: 0; color: #5f5549; font-size: 11px; }
-    [data-p1-actions="true"] { display: flex; gap: 8px; flex-wrap: wrap; }
-    [data-p1-button="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: #fffef9; color: #171411; border-radius: 10px; padding: 8px 10px; font: 600 11px/1.1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+    [data-p1-move-label="true"] { font-size: 12px; font-weight: 700; }
+    [data-p1-message="true"] { margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.36; }
+    [data-p1-small="true"] { margin: 0; color: #5f5549; font-size: 11px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    [data-p1-actions="true"] { display: flex; gap: 6px; flex-wrap: wrap; }
+    [data-p1-button="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: #fffef9; color: #171411; border-radius: 999px; padding: 6px 9px; font: 600 10px/1.1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
     [data-p1-button="true"][data-tone="primary"] { background: #171411; color: #fffaf3; border-color: #171411; }
     [data-p1-help="true"] { font-size: 11px; color: #6a6054; }
-    [data-p1-section-title="true"] { margin: 0; font-size: 11px; color: #6a6054; letter-spacing: 0.08em; text-transform: uppercase; }
     [data-p1-outcome-row="true"] { display: flex; gap: 8px; flex-wrap: wrap; }
   `;
   state.shellRoot = document.createElement("div");
@@ -592,17 +565,6 @@ async function onShellClick(event) {
     return;
   }
 
-  if (action === "cold-start") {
-    await chooseColdStart(actionNode.getAttribute("data-cold-start"));
-    return;
-  }
-
-  if (action === "preset") {
-    state.activePreset = actionNode.getAttribute("data-preset") || state.activePreset;
-    renderUi();
-    return;
-  }
-
   if (action === "use-branch") {
     await useBranch(Number(actionNode.getAttribute("data-option")));
     return;
@@ -625,8 +587,8 @@ function buildLauncherMarkup() {
 
   const rect = clampRect(state.currentComposeTarget.getBoundingClientRect());
   const heuristic = evaluateDraftHeuristically(state.lastDraft, state.currentContext);
-  const top = clampNumber(rect.top - 40, 12, window.innerHeight - 46);
-  const left = clampNumber(rect.right - 210, 12, Math.max(12, window.innerWidth - 226));
+  const top = clampNumber(rect.top + 10, 12, window.innerHeight - 54);
+  const left = clampNumber(rect.right - 46, 12, Math.max(12, window.innerWidth - 54));
 
   return `
     <button
@@ -637,8 +599,6 @@ function buildLauncherMarkup() {
       aria-label="Analyze current draft with persona1"
     >
       <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(heuristic.annotation)}">${escapeHtml(heuristic.annotation)}</span>
-      <strong>${escapeHtml(heuristic.label)}</strong>
-      <span>ctrl/cmd+shift+space</span>
     </button>
   `;
 }
@@ -647,7 +607,6 @@ function buildHudMarkup() {
   const layout = computeHudLayout();
   const context = state.currentContext;
   const draftAssessment = state.analysis?.draftAssessment || evaluateDraftHeuristically(state.lastDraft, context);
-  const mirrorInsight = state.extensionState?.mirrorInsights?.[0] || null;
   const branchesMarkup = state.analysis?.branches?.length
     ? `
         <div data-p1-branches="true">
@@ -656,86 +615,25 @@ function buildHudMarkup() {
       `
     : `
         <div data-p1-card="true">
-          <strong>${escapeHtml(state.isAnalyzing ? "building move tree..." : "trigger analysis to see the next three likely branches.")}</strong>
-          <p data-p1-help="true">shortcut: ctrl/cmd+shift+space. then 1, 2, or 3 to apply a move.</p>
+          <strong>${escapeHtml(state.isAnalyzing ? "reading the board..." : "click the icon or press ctrl/cmd+shift+space.")}</strong>
         </div>
       `;
 
   return `
     <section data-p1-hud="true" style="top:${layout.top}px;left:${layout.left}px;">
-      <header data-p1-header="true">
-        <div>
-          <p data-p1-muted="true">persona1</p>
-          <h2 data-p1-title="true">see the board before you send</h2>
-          <p data-p1-muted="true">${escapeHtml(context ? describeContextLine(context) : "focus a compose box to analyze in place.")}</p>
+      <div data-p1-header="true">
+        <div data-p1-row="true">
+          <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(draftAssessment.annotation)}">${escapeHtml(draftAssessment.annotation)}</span>
+          <strong>${escapeHtml(draftAssessment.label)}</strong>
         </div>
-        <div data-p1-actions="true">
-          <button type="button" data-p1-button="true" data-p1-action="close-hud">close</button>
-        </div>
-      </header>
+        <button type="button" data-p1-button="true" data-p1-action="close-hud">x</button>
+      </div>
       <div data-p1-body="true">
         ${state.error ? `<div data-p1-card="true" data-tone="error"><strong>${escapeHtml(state.error)}</strong></div>` : ""}
-        ${state.status ? `<div data-p1-card="true" data-tone="status"><strong>${escapeHtml(state.status)}</strong></div>` : ""}
-        ${!state.extensionState?.onboardingDone ? buildOnboardingMarkup() : ""}
-        ${state.extensionState?.onboardingDone ? `
-          <div data-p1-card="true">
-            <div data-p1-row="true">
-              <div data-p1-row="true">
-                <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(draftAssessment.annotation)}">${escapeHtml(draftAssessment.annotation)}</span>
-                <div>
-                  <strong>${escapeHtml(draftAssessment.label)}</strong>
-                  <p data-p1-small="true">${escapeHtml(draftAssessment.reason)}</p>
-                </div>
-              </div>
-              <button type="button" data-p1-button="true" data-tone="primary" data-p1-action="analyze-now">analyze</button>
-            </div>
-            <div data-p1-preset-row="true">
-              ${PRESETS.map((preset) => `
-                <button
-                  type="button"
-                  data-p1-chip="true"
-                  data-p1-action="preset"
-                  data-preset="${preset}"
-                  data-selected="${preset === state.activePreset ? "true" : "false"}"
-                >${escapeHtml(preset)}</button>
-              `).join("")}
-            </div>
-            ${context ? `
-              <div data-p1-context-grid="true">
-                <div data-p1-mini="true"><label>recipient</label><strong>${escapeHtml(context.recipientName || context.recipientHandle || "unknown")}</strong></div>
-                <div data-p1-mini="true"><label>confidence</label><strong>${escapeHtml(context.contextConfidence)}</strong></div>
-                <div data-p1-mini="true"><label>wants</label><strong>${escapeHtml(context.inferredWants)}</strong></div>
-                <div data-p1-mini="true"><label>risk</label><strong>${escapeHtml(context.inferredConcerns)}</strong></div>
-              </div>
-            ` : ""}
-          </div>
-          ${mirrorInsight ? `
-            <div data-p1-card="true">
-              <p data-p1-section-title="true">mirror</p>
-              <strong>${escapeHtml(mirrorInsight.observation)}</strong>
-              <p data-p1-small="true">${escapeHtml(mirrorInsight.supportingPattern)} | evidence ${escapeHtml(mirrorInsight.evidenceCount)}</p>
-            </div>
-          ` : ""}
-          ${branchesMarkup}
-          ${buildOutcomeMarkup()}
-        ` : ""}
+        ${branchesMarkup}
+        ${buildOutcomeMarkup()}
       </div>
     </section>
-  `;
-}
-
-function buildOnboardingMarkup() {
-  return `
-    <div data-p1-card="true">
-      <p data-p1-section-title="true">cold start</p>
-      <strong>pick the first prior once.</strong>
-      <p data-p1-small="true">no form. no setup. this only sets the initial read on your drafts.</p>
-      <div data-p1-actions="true">
-        <button type="button" data-p1-button="true" data-p1-action="cold-start" data-cold-start="dating">dating</button>
-        <button type="button" data-p1-button="true" data-p1-action="cold-start" data-cold-start="professional">professional</button>
-        <button type="button" data-p1-button="true" data-p1-action="cold-start" data-cold-start="general">general</button>
-      </div>
-    </div>
   `;
 }
 
@@ -752,22 +650,15 @@ function buildBranchCard(branch) {
       <div data-p1-annotation-row="true">
         <div data-p1-row="true">
           <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(branch.annotation)}">${escapeHtml(branch.annotation)}</span>
-          <div>
-            <p data-p1-move-label="true">${escapeHtml(branch.moveLabel)}</p>
-            <p data-p1-small="true">${branch.isRecommended ? "recommended move" : `option ${escapeHtml(branch.optionId)}`}</p>
-          </div>
+          <p data-p1-move-label="true">${escapeHtml(branch.moveLabel)}</p>
         </div>
-        <p data-p1-small="true">alignment ${escapeHtml(branch.goalAlignmentScore)}</p>
+        <p data-p1-small="true">${branch.isRecommended ? "recommended" : `${escapeHtml(branch.goalAlignmentScore)}`}</p>
       </div>
       <p data-p1-message="true">${escapeHtml(branch.message)}</p>
-      <p data-p1-small="true">their likely move: ${escapeHtml(branch.predictedResponse)}</p>
-      <p data-p1-small="true">opponent move type: ${escapeHtml(branch.opponentMoveType)}</p>
-      <p data-p1-small="true">branch path: ${escapeHtml(branch.branchPath)}</p>
-      <p data-p1-small="true">payoff: ${escapeHtml(branch.strategicPayoff)}</p>
-      <p data-p1-small="true">why: ${escapeHtml(branch.whyItWorks)}${branch.risk ? ` | risk: ${escapeHtml(branch.risk)}` : ""}</p>
+      <p data-p1-small="true">${escapeHtml(branch.predictedResponse)}</p>
+      <p data-p1-small="true">${escapeHtml(branch.branchPath)}</p>
       <div data-p1-actions="true">
-        <button type="button" data-p1-button="true" data-tone="primary" data-p1-action="use-branch" data-option="${branch.optionId}">use ${branch.optionId}</button>
-        <button type="button" data-p1-button="true" data-p1-action="copy-branch" data-option="${branch.optionId}">copy</button>
+        <button type="button" data-p1-button="true" data-tone="primary" data-p1-action="use-branch" data-option="${branch.optionId}">use</button>
       </div>
     </article>
   `;
@@ -793,20 +684,20 @@ function buildOutcomeMarkup() {
 
 function computeHudLayout() {
   const composeRect = state.currentComposeTarget ? clampRect(state.currentComposeTarget.getBoundingClientRect()) : null;
-  const width = Math.min(520, window.innerWidth - 24);
+  const width = Math.min(Math.max((composeRect?.right || 0) - (composeRect?.left || 0), 280), 420, window.innerWidth - 24);
 
   if (!composeRect) {
     return {
-      top: clampNumber(window.innerHeight / 2 - 180, 12, Math.max(12, window.innerHeight - 380)),
+      top: clampNumber(window.innerHeight / 2 - 120, 12, Math.max(12, window.innerHeight - 260)),
       left: clampNumber(window.innerWidth / 2 - width / 2, 12, Math.max(12, window.innerWidth - width - 12))
     };
   }
 
   const spaceBelow = window.innerHeight - composeRect.bottom;
   const top =
-    spaceBelow > 380
-      ? clampNumber(composeRect.bottom + 10, 12, Math.max(12, window.innerHeight - 420))
-      : clampNumber(composeRect.top - 390, 12, Math.max(12, window.innerHeight - 420));
+    spaceBelow > 220
+      ? clampNumber(composeRect.bottom + 8, 12, Math.max(12, window.innerHeight - 260))
+      : clampNumber(composeRect.top - 248, 12, Math.max(12, window.innerHeight - 260));
   const left = clampNumber(composeRect.right - width, 12, Math.max(12, window.innerWidth - width - 12));
 
   return { top, left };

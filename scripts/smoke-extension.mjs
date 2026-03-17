@@ -72,7 +72,7 @@ try {
     composeSelector: ".msg-form__contenteditable",
     readDraft: () =>
       document.querySelector(".msg-form__contenteditable")?.innerText?.trim() || "",
-    coldStart: "professional"
+    openMode: "click"
   });
 
   await runScenario({
@@ -80,7 +80,8 @@ try {
     url: `${baseUrl}/gmail`,
     composeSelector: 'div[aria-label="Message Body"]',
     readDraft: () =>
-      document.querySelector('div[aria-label="Message Body"]')?.innerText?.trim() || ""
+      document.querySelector('div[aria-label="Message Body"]')?.innerText?.trim() || "",
+    openMode: "hotkey"
   });
 
   await runScenario({
@@ -88,7 +89,8 @@ try {
     url: `${baseUrl}/fallback`,
     composeSelector: "textarea",
     readDraft: () =>
-      document.querySelector("textarea")?.value || ""
+      document.querySelector("textarea")?.value || "",
+    openMode: "hotkey"
   });
 
   process.stdout.write("persona1 extension smoke passed\n");
@@ -105,19 +107,24 @@ async function runScenario(input) {
   await page.locator(input.composeSelector).click();
 
   const beforeInsert = await page.evaluate(input.readDraft);
-  await page.keyboard.press("Control+Shift+Space");
+  await page.waitForFunction(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return Boolean(root?.querySelector('[data-p1-launcher="true"]'));
+  });
+
+  if (input.openMode === "click") {
+    await page.evaluate(() => {
+      const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+      root?.querySelector('[data-p1-launcher="true"]')?.click();
+    });
+  } else {
+    await page.keyboard.press("Control+Shift+Space");
+  }
 
   await page.waitForFunction(() => {
     const host = document.querySelector("[data-persona1-root]");
     return Boolean(host?.shadowRoot?.querySelector('[data-p1-hud="true"]'));
   });
-
-  if (input.coldStart) {
-    await page.evaluate((coldStart) => {
-      const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
-      root?.querySelector(`[data-cold-start="${coldStart}"]`)?.click();
-    }, input.coldStart);
-  }
 
   await page.waitForFunction(() => {
     const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
@@ -129,9 +136,8 @@ async function runScenario(input) {
     return root?.querySelector('[data-p1-hud="true"]')?.innerText || "";
   });
 
-  assert.match(panelText, /see the board before you send/i);
-  assert.match(panelText, /their likely move/i);
-  assert.match(panelText, /alignment/i);
+  assert.match(panelText, /recommended|option 2|option 3|playable move|interesting move|weak move|drifts, no frame/i);
+  assert.doesNotMatch(panelText, /cold start/i);
 
   await page.keyboard.press("1");
 

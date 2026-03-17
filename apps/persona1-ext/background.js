@@ -101,12 +101,16 @@ async function handleMessage(message, sender) {
 }
 
 async function handleAnalyzeRequest(message) {
-  const state = await getExtensionState();
+  let state = await getExtensionState();
   if (!state.onboardingDone || !state.coldStartContext || !state.persona) {
-    return {
-      ok: false,
-      requiresOnboarding: true,
-      error: "Choose a cold-start context before analyzing."
+    const inferredColdStart = inferColdStartContext(message.payload.context);
+    const bootstrap = await setColdStartContext(inferredColdStart);
+    state = {
+      ...(await getExtensionState()),
+      onboardingDone: true,
+      coldStartContext: inferredColdStart,
+      userId: bootstrap.userId,
+      persona: bootstrap.persona
     };
   }
 
@@ -133,6 +137,18 @@ async function handleAnalyzeRequest(message) {
     analysis,
     usageCount
   };
+}
+
+function inferColdStartContext(context) {
+  if (context?.platform === "dating_app" || context?.relationshipType === "romantic") {
+    return "dating";
+  }
+
+  if (["linkedin", "gmail", "slack"].includes(context?.platform)) {
+    return "professional";
+  }
+
+  return "general";
 }
 
 async function handleOutcomeRequest(payload) {
