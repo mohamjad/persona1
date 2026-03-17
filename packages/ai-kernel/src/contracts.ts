@@ -43,6 +43,7 @@ export const BranchOptionSchema = z.object({
   optionId: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   isRecommended: z.boolean(),
   annotation: MoveAnnotationSchema,
+  outcomeLabel: z.string().min(1),
   moveLabel: z.string().min(1),
   message: z.string().min(1),
   predictedResponse: z.string().min(1),
@@ -55,6 +56,7 @@ export const BranchOptionSchema = z.object({
 });
 
 export const BranchTreeSchema = z.object({
+  situationRead: z.string().min(1),
   draftAssessment: DraftAssessmentSchema,
   branches: z
     .array(BranchOptionSchema)

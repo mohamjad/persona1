@@ -133,7 +133,7 @@ async function runScenario(input) {
 
   await page.waitForFunction(() => {
     const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
-    return Boolean(root?.querySelector('[data-p1-branch-card="true"]'));
+    return Boolean(root?.querySelector('[data-p1-orb="true"]'));
   }, { timeout: 60000 });
 
   const overlayPlacement = await page.evaluate((selector) => {
@@ -167,8 +167,8 @@ async function runScenario(input) {
     return root?.querySelector('[data-p1-hud="true"]')?.innerText || "";
   });
 
-  assert.match(panelText, /likely outcome:/i);
-  assert.match(panelText, /recommended|option 2|option 3|playable move|interesting move|weak move|drifts, no frame/i);
+  assert.match(panelText, /likely outcome/i);
+  assert.match(panelText, /recommended|play/i);
   assert.doesNotMatch(panelText, /cold start/i);
 
   await page.keyboard.press("1");

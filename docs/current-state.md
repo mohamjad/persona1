@@ -8,7 +8,7 @@ Current repo status:
 - source-of-truth planning docs created
 - full repo scaffold implemented
 - API implemented
-- Chrome extension implemented with an icon-anchored branch bloom as the active MVP surface
+- Chrome extension implemented with a three-outcome orb dock as the active MVP surface
 - local-first persona engine implemented
 - billing and usage tracking implemented
 - repository adapters implemented
@@ -48,10 +48,11 @@ Extension capabilities now implemented:
 - Slack extraction
 - dating-app extraction
 - fallback extraction
-- compact branch bloom rendering anchored directly to the active compose box
+- compact three-orb dock rendering anchored directly to the active compose box
 - circular move icon anchored directly to the draft surface
 - closed-state launcher hides while the branch bloom is open and can be dragged or dismissed
-- each branch card leads with the likely outcome and stays inside the compose surface footprint
+- each orb represents a different outcome and the selected line shows how the conversation is likely to unfold
+- `@formkit/auto-animate` is used to smooth the dock and preview transitions
 - keyboard-first analysis with `Ctrl/Cmd+Shift+Space`
 - chess-style draft annotations and branch annotations
 - option insertion into the active compose box

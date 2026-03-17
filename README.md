@@ -8,7 +8,7 @@ This repo is no longer a thin scaffold.
 
 The currently implemented product path includes:
 
-- Chrome extension with live compose detection, auto-inferred context mode, keyboard-first analysis, a circular move icon, icon-anchored branch bloom rendering, option insertion, outcome capture, mirror surfacing, and local scorecard output
+- Chrome extension with live compose detection, auto-inferred context mode, keyboard-first analysis, a circular move icon, a three-outcome orb dock, selected-line unfolding preview, smooth motion, option insertion, outcome capture, mirror surfacing, and local scorecard output
 - multi-platform extraction across LinkedIn, Gmail, X DMs, Slack, dating-app surfaces, and fallback compose targets
 - OpenRouter-backed analysis with strict contract parsing and provider-backed persona update and mirror inference
 - deterministic local/server fallback behavior for persona evolution when provider paths fail
@@ -50,7 +50,7 @@ The current product direction is:
 
 The current live implementation is local-first by default, with server-backed sync, billing, and durable storage available when runtime credentials are supplied.
 
-The active MVP UI is an injected icon-anchored branch bloom rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the three branches rendered directly on that compose surface, then hit `1`, `2`, or `3` to apply a move. Each branch now leads with the likely outcome instead of burying the consequence below the text. The closed-state icon hides while the bloom is open and can be dragged or dismissed. Cold start and preset selection are inferred from context instead of being exposed in the normal flow.
+The active MVP UI is an injected compose-surface orb dock rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the three outcome orbs rendered directly on that writing surface, then click an orb or hit `1`, `2`, or `3` to apply a move. The selected orb shows how the conversation is likely to unfold, the closed-state icon hides while the dock is open and can be dragged or dismissed, and the transitions are smoothed with `@formkit/auto-animate`. Cold start and preset selection are inferred from context instead of being exposed in the normal flow.
 
 ## Local Runtime
 

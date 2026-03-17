@@ -45,5 +45,11 @@
       "js": ["content-script.js"],
       "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["vendor/auto-animate.mjs"],
+      "matches": ["<all_urls>"]
+    }
   ]
 }

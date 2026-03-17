@@ -24,7 +24,7 @@ Distribution may be documented in this repo for completeness, but it should not 
 The source spec assumes a world1-style modular layout. In this repo, that target topology should still be preserved:
 
 - `apps/persona1-ext`
-  Chrome extension, Manifest V3, icon-anchored branch bloom UI, content scripts, service worker
+  Chrome extension, Manifest V3, compose-surface orb dock UI, content scripts, service worker
 - `apps/persona1-api`
   Cloud Run API, inference endpoints, auth, billing hooks, sync endpoints
 - `packages/ai-kernel`
@@ -69,7 +69,7 @@ The extension owns:
 
 - compose detection
 - DOM extraction
-- icon-anchored branch bloom attached to the active draft
+- compose-surface outcome orb dock attached to the active draft
 - keyboard-first analysis and move application
 - local observation logging
 - local persona storage
@@ -142,7 +142,7 @@ The repo currently implements:
 - Slack extractor
 - dating-app extractor
 - fallback extractor
-- icon-anchored branch bloom with draft annotations and move labels
+- compose-surface orb dock with draft annotations, outcome labels, and unfolding preview
 - popup settings and fallback controls
 - full preset catalog across date, pitch, negotiate, apologize, reconnect, confront, close, and decline
 - analyze endpoint

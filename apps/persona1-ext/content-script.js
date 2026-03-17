@@ -30,6 +30,8 @@ const state = {
   extensionState: null,
   shadowHost: null,
   shellRoot: null,
+  autoAnimate: null,
+  autoAnimateController: null,
   hudOpen: false,
   observer: null,
   refreshTimer: null,
@@ -41,6 +43,7 @@ const state = {
   status: "",
   error: "",
   lastAppliedBranch: null,
+  hoverOptionId: null,
   launcherOffsetX: 0,
   launcherOffsetY: 0,
   launcherDismissed: false,
@@ -83,6 +86,7 @@ function bootContentScript() {
 }
 
 function start() {
+  void loadMotionLibrary();
   refreshContext();
   installObserver();
   window.addEventListener("focusin", refreshContext, true);
@@ -94,6 +98,22 @@ function start() {
   window.addEventListener("resize", renderUi, true);
   window.addEventListener("scroll", renderUi, true);
   state.refreshTimer = window.setInterval(refreshContext, 1200);
+}
+
+async function loadMotionLibrary() {
+  if (state.autoAnimate) {
+    return state.autoAnimate;
+  }
+
+  try {
+    const module = await import(chrome.runtime.getURL("vendor/auto-animate.mjs"));
+    state.autoAnimate = module.autoAnimate || module.default || null;
+    attachMotion();
+  } catch {
+    state.autoAnimate = null;
+  }
+
+  return state.autoAnimate;
 }
 
 async function onMessage(message) {
@@ -283,6 +303,7 @@ function closeHud() {
   state.error = "";
   state.analysis = null;
   state.selectedOptionId = null;
+  state.hoverOptionId = null;
   state.lastAppliedBranch = null;
   renderUi();
 }
@@ -386,6 +407,7 @@ async function analyzeCurrentDraft() {
     };
     state.analysis = response.analysis;
     state.selectedOptionId = recommendedOptionId(response.analysis.branches);
+    state.hoverOptionId = state.selectedOptionId;
     state.lastAppliedBranch = null;
     state.error = "";
     state.status = response.analysis?.draftAssessment?.reason || "move tree ready.";
@@ -405,6 +427,7 @@ async function useBranch(optionId) {
   }
 
   state.selectedOptionId = optionId;
+  state.hoverOptionId = optionId;
   const inserted = state.currentComposeTarget ? insertComposeValue(state.currentComposeTarget, branch.message) : false;
   state.status = inserted ? `${branch.moveLabel.toLowerCase()} inserted.` : `option ${optionId} copied.`;
   state.error = "";
@@ -430,6 +453,7 @@ async function copyBranch(optionId) {
 
   await copyText(branch.message);
   state.selectedOptionId = optionId;
+  state.hoverOptionId = optionId;
   state.status = `option ${optionId} copied.`;
   state.error = "";
   renderUi();
@@ -526,18 +550,24 @@ function ensureRoot() {
     [data-p1-badge-tone="risky"] { background: #6a241a; color: #fff6f2; }
     [data-p1-badge-tone="neutral"] { background: #5d4a20; color: #fff8e8; }
     [data-p1-hud="true"] { position: fixed; pointer-events: auto; display: flex; flex-direction: column; gap: 6px; }
-    [data-p1-hud-head="true"] { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 2px; }
+    [data-p1-hud-head="true"] { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 0 2px; }
     [data-p1-hud-close="true"] { border: 1px solid rgba(22, 18, 13, 0.12); background: rgba(255, 251, 244, 0.98); color: #5f5549; border-radius: 999px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font: 700 12px/1 ui-sans-serif, system-ui, sans-serif; }
+    [data-p1-situation="true"] { padding: 7px 10px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(250, 246, 239, 0.98); border-radius: 12px; box-shadow: 0 10px 24px rgba(22, 18, 13, 0.10); font-size: 11px; color: #4b4033; }
     [data-p1-inline-note="true"] { padding: 9px 11px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.94); border-radius: 12px; box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12); font-weight: 600; }
     [data-p1-inline-note="true"][data-tone="error"] { border-color: rgba(140, 43, 27, 0.26); background: #fff2ef; color: #7e1e10; }
     [data-p1-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-    [data-p1-branches="true"] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
-    [data-p1-branch-card="true"] { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 11px 11px 10px; border-radius: 14px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.96); box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12); cursor: pointer; }
-    [data-p1-branch-card="true"][data-selected="true"] { border-color: rgba(22, 18, 13, 0.3); box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12), inset 0 0 0 1px rgba(22, 18, 13, 0.08); }
-    [data-p1-branch-card="true"][data-recommended="true"] { background: #f7f0e5; }
-    [data-p1-annotation-row="true"] { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    [data-p1-move-label="true"] { font-size: 12px; font-weight: 700; }
-    [data-p1-outcome-lead="true"] { margin: 0; font-size: 12px; line-height: 1.35; color: #2f261f; font-weight: 700; }
+    [data-p1-preview="true"] { padding: 10px 11px; border: 1px solid rgba(22, 18, 13, 0.08); background: rgba(255,255,255,0.97); border-radius: 14px; box-shadow: 0 14px 36px rgba(22, 18, 13, 0.12); display: flex; flex-direction: column; gap: 6px; }
+    [data-p1-preview-head="true"] { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    [data-p1-preview-title="true"] { margin: 0; font-size: 11px; font-weight: 700; color: #6b5f52; text-transform: uppercase; letter-spacing: 0.04em; }
+    [data-p1-preview-label="true"] { margin: 0; font-size: 12px; font-weight: 700; color: #211a14; }
+    [data-p1-orbs="true"] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; }
+    [data-p1-orb-cell="true"] { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+    [data-p1-orb="true"] { width: 56px; height: 56px; border-radius: 999px; border: 1px solid rgba(22, 18, 13, 0.10); background: rgba(255,255,255,0.97); box-shadow: 0 10px 24px rgba(22, 18, 13, 0.10); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease; }
+    [data-p1-orb="true"]:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(22, 18, 13, 0.14); }
+    [data-p1-orb="true"][data-selected="true"] { border-color: rgba(22, 18, 13, 0.30); box-shadow: 0 10px 24px rgba(22, 18, 13, 0.10), inset 0 0 0 1px rgba(22, 18, 13, 0.08); }
+    [data-p1-orb="true"][data-recommended="true"] { background: #f7f0e5; }
+    [data-p1-orb-kicker="true"] { font-size: 10px; color: #7d7164; text-transform: uppercase; letter-spacing: 0.04em; }
+    [data-p1-orb-label="true"] { font-size: 11px; line-height: 1.2; text-align: center; color: #4f453b; max-width: 88px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     [data-p1-message="true"] { margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.36; }
     [data-p1-small="true"] { margin: 0; color: #5f5549; font-size: 11px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     [data-p1-branch-path="true"] { margin: 0; color: #746a5e; font-size: 11px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
@@ -547,20 +577,43 @@ function ensureRoot() {
     [data-p1-help="true"] { font-size: 11px; color: #6a6054; }
     [data-p1-outcome="true"] { padding: 2px 0 0 2px; }
     [data-p1-outcome-row="true"] { display: flex; gap: 6px; flex-wrap: wrap; }
-    @media (max-width: 760px) {
-      [data-p1-branches="true"] { grid-template-columns: 1fr; }
+    @media (max-width: 520px) {
+      [data-p1-orbs="true"] { grid-template-columns: 1fr; }
+      [data-p1-orb-cell="true"] { flex-direction: row; justify-content: flex-start; }
+      [data-p1-orb-label="true"] { text-align: left; max-width: none; }
     }
   `;
   state.shellRoot = document.createElement("div");
   state.shellRoot.setAttribute("data-p1-shell", "true");
   state.shellRoot.addEventListener("click", onShellClick);
+  state.shellRoot.addEventListener("mouseover", onShellMouseOver);
   state.shellRoot.addEventListener("pointerdown", onShellPointerDown);
   shadow.append(style, state.shellRoot);
   mount.appendChild(state.shadowHost);
+  attachMotion();
   return true;
 }
 
+function attachMotion() {
+  if (!state.autoAnimate || !state.shellRoot || state.autoAnimateController) {
+    return;
+  }
+
+  try {
+    state.autoAnimateController = state.autoAnimate(state.shellRoot, {
+      duration: 180,
+      easing: "cubic-bezier(0.2, 0.8, 0.2, 1)"
+    });
+  } catch {
+    state.autoAnimateController = null;
+  }
+}
+
 function teardownRoot() {
+  try {
+    state.autoAnimateController?.destroy?.();
+  } catch {}
+  state.autoAnimateController = null;
   state.shadowHost?.remove();
   state.shadowHost = null;
   state.shellRoot = null;
@@ -615,6 +668,22 @@ async function onShellClick(event) {
   if (action === "record-outcome") {
     await recordOutcome(actionNode.getAttribute("data-outcome"));
   }
+}
+
+function onShellMouseOver(event) {
+  const orbNode = event.target?.closest?.("[data-p1-orb='true']");
+  if (!orbNode) {
+    return;
+  }
+
+  const optionId = Number(orbNode.getAttribute("data-option"));
+  if (!Number.isFinite(optionId) || optionId === state.selectedOptionId) {
+    return;
+  }
+
+  state.hoverOptionId = optionId;
+  state.selectedOptionId = optionId;
+  renderUi();
 }
 
 function onShellPointerDown(event) {
@@ -683,7 +752,7 @@ function buildLauncherMarkup() {
         data-p1-action="dismiss-launcher"
         aria-label="Dismiss persona1 launcher"
       >
-        ×
+        x
       </button>
     </div>
   `;
@@ -693,14 +762,17 @@ function buildHudMarkup() {
   const layout = computeHudLayout();
   const context = state.currentContext;
   const draftAssessment = state.analysis?.draftAssessment || evaluateDraftHeuristically(state.lastDraft, context);
+  const activeBranch = selectedBranch();
   const content = state.error
     ? `<div data-p1-inline-note="true" data-tone="error">${escapeHtml(state.error)}</div>`
     : state.isAnalyzing
       ? `<div data-p1-inline-note="true">${escapeHtml(state.status || "reading the board...")}</div>`
       : state.analysis?.branches?.length
         ? `
-          <div data-p1-branches="true">
-            ${state.analysis.branches.map((branch) => buildBranchCard(branch)).join("")}
+          <div data-p1-situation="true">${escapeHtml(state.analysis.situationRead)}</div>
+          ${activeBranch ? buildPreviewBubble(activeBranch) : ""}
+          <div data-p1-orbs="true">
+            ${state.analysis.branches.map((branch) => buildOutcomeOrb(branch)).join("")}
           </div>
           ${buildOutcomeMarkup()}
         `
@@ -710,35 +782,46 @@ function buildHudMarkup() {
     <section data-p1-hud="true" style="top:${layout.top}px;left:${layout.left}px;width:${layout.width}px;">
       <div data-p1-hud-head="true">
         <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(draftAssessment.annotation)}">${escapeHtml(draftAssessment.annotation)}</span>
-        <button type="button" data-p1-hud-close="true" data-p1-action="close-hud" aria-label="Close move tree">×</button>
+        <button type="button" data-p1-hud-close="true" data-p1-action="close-hud" aria-label="Close move tree">x</button>
       </div>
       ${content}
     </section>
   `;
 }
 
-function buildBranchCard(branch) {
+function buildOutcomeOrb(branch) {
   const selected = branch.optionId === state.selectedOptionId;
   return `
-    <article
-      data-p1-branch-card="true"
-      data-option="${branch.optionId}"
-      data-selected="${selected ? "true" : "false"}"
-      data-recommended="${branch.isRecommended ? "true" : "false"}"
-      data-p1-action="use-branch"
-    >
-      <div data-p1-annotation-row="true">
-        <div data-p1-row="true">
-          <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(branch.annotation)}">${escapeHtml(branch.annotation)}</span>
-          <p data-p1-move-label="true">${escapeHtml(branch.moveLabel)}</p>
-        </div>
-        <p data-p1-small="true">${branch.isRecommended ? "recommended" : `${escapeHtml(branch.goalAlignmentScore)}`}</p>
+    <div data-p1-orb-cell="true">
+      <button
+        type="button"
+        data-p1-orb="true"
+        data-option="${branch.optionId}"
+        data-selected="${selected ? "true" : "false"}"
+        data-recommended="${branch.isRecommended ? "true" : "false"}"
+        data-p1-action="use-branch"
+        aria-label="${escapeHtml(branch.outcomeLabel)}"
+      >
+        <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(branch.annotation)}">${escapeHtml(branch.annotation)}</span>
+      </button>
+      <div data-p1-orb-kicker="true">${branch.isRecommended ? "recommended" : "play"}</div>
+      <div data-p1-orb-label="true">${escapeHtml(branch.outcomeLabel)}</div>
+    </div>
+  `;
+}
+
+function buildPreviewBubble(branch) {
+  return `
+    <div data-p1-preview="true">
+      <div data-p1-preview-head="true">
+        <p data-p1-preview-title="true">likely outcome</p>
+        <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(branch.annotation)}">${escapeHtml(branch.annotation)}</span>
       </div>
-      <p data-p1-outcome-lead="true">likely outcome: ${escapeHtml(branch.predictedResponse)}</p>
+      <p data-p1-preview-label="true">${escapeHtml(branch.outcomeLabel)}</p>
+      <p data-p1-small="true">${escapeHtml(branch.predictedResponse)}</p>
       <p data-p1-message="true">${escapeHtml(branch.message)}</p>
-      <p data-p1-small="true">${escapeHtml(branch.strategicPayoff)}</p>
-      <p data-p1-branch-path="true">${escapeHtml(branch.branchPath)}</p>
-    </article>
+      <p data-p1-branch-path="true">${escapeHtml(branch.moveLabel)} · ${escapeHtml(branch.branchPath)}</p>
+    </div>
   `;
 }
 
@@ -764,7 +847,7 @@ function computeHudLayout() {
   const maxViewportWidth = Math.max(window.innerWidth - 24, 160);
   const width = composeRect
     ? Math.max(
-        Math.min(composeWidth - 16, 860, maxViewportWidth),
+        Math.min(composeWidth - 16, 420, maxViewportWidth),
         Math.min(180, Math.max(composeWidth - 16, 0), maxViewportWidth)
       )
     : Math.min(360, maxViewportWidth);
@@ -777,8 +860,7 @@ function computeHudLayout() {
     };
   }
 
-  const compact = width < 760;
-  const overlayHeight = compact ? 244 : 188;
+  const overlayHeight = width < 300 ? 300 : 252;
   const top =
     composeRect.height > overlayHeight + 20
       ? clampNumber(composeRect.bottom - overlayHeight - 10, 12, Math.max(12, window.innerHeight - overlayHeight - 12))
@@ -808,6 +890,11 @@ function sanitizeContext(detected) {
 
 function recommendedOptionId(branches) {
   return branches.find((branch) => branch.isRecommended)?.optionId || 1;
+}
+
+function selectedBranch() {
+  const optionId = state.hoverOptionId || state.selectedOptionId;
+  return state.analysis?.branches?.find((branch) => branch.optionId === optionId) || state.analysis?.branches?.[0] || null;
 }
 
 function toRecipientContext(context) {
