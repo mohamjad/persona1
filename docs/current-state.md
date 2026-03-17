@@ -27,6 +27,7 @@ Current canonical planning inputs:
 - [specs/persona1-master-source.txt](/C:/Users/moham/persona1/specs/persona1-master-source.txt)
 - [specs/persona1-master-phase-plan.md](/C:/Users/moham/persona1/specs/persona1-master-phase-plan.md)
 - [specs/persona1-master-v2-source.txt](/C:/Users/moham/persona1/specs/persona1-master-v2-source.txt)
+- [docs/runbooks/master-v2-handoff.md](/C:/Users/moham/persona1/docs/runbooks/master-v2-handoff.md)
 
 ## Implemented Product Surface
 

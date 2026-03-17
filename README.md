@@ -39,6 +39,7 @@ Start here:
 - [docs/design-philosophy.md](/C:/Users/moham/persona1/docs/design-philosophy.md)
 - [docs/architecture.md](/C:/Users/moham/persona1/docs/architecture.md)
 - [docs/current-state.md](/C:/Users/moham/persona1/docs/current-state.md)
+- [docs/runbooks/master-v2-handoff.md](/C:/Users/moham/persona1/docs/runbooks/master-v2-handoff.md)
 - [specs/persona1-source-of-truth-plan.md](/C:/Users/moham/persona1/specs/persona1-source-of-truth-plan.md)
 - [specs/persona1-phased-build-plan.md](/C:/Users/moham/persona1/specs/persona1-phased-build-plan.md)
 - [specs/persona1-master-phase-plan.md](/C:/Users/moham/persona1/specs/persona1-master-phase-plan.md)
