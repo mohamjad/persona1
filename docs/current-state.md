@@ -23,6 +23,8 @@ Current canonical planning inputs:
 - [specs/persona1-spec-v2-source.txt](/C:/Users/moham/persona1/specs/persona1-spec-v2-source.txt)
 - [specs/persona1-source-of-truth-plan.md](/C:/Users/moham/persona1/specs/persona1-source-of-truth-plan.md)
 - [specs/persona1-phased-build-plan.md](/C:/Users/moham/persona1/specs/persona1-phased-build-plan.md)
+- [specs/persona1-master-source.txt](/C:/Users/moham/persona1/specs/persona1-master-source.txt)
+- [specs/persona1-master-phase-plan.md](/C:/Users/moham/persona1/specs/persona1-master-phase-plan.md)
 
 ## Implemented Product Surface
 
@@ -51,7 +53,8 @@ Extension capabilities now implemented:
 - compact three-orb dock rendering anchored directly to the active compose box
 - circular move icon anchored directly to the draft surface
 - closed-state launcher hides while the branch bloom is open and can be dragged or dismissed
-- each orb represents a different outcome and the selected line shows how the conversation is likely to unfold
+- each orb represents a different outcome and the preview stays collapsed until the user hovers or selects a line
+- conversation-first context payloads with a live conversation summary, recent visible messages, and a goal hint separate from profile-level tone shaping
 - `@formkit/auto-animate` is used to smooth the dock and preview transitions
 - keyboard-first analysis with `Ctrl/Cmd+Shift+Space`
 - chess-style draft annotations and branch annotations
@@ -64,7 +67,7 @@ Extension capabilities now implemented:
 - local mirror surfacing
 - local communication scorecard
 - provider-backed persona update and mirror response handling for authenticated flows
-- browser smoke harness for LinkedIn-style, Gmail-style, and fallback compose analysis and branch insertion
+- self-contained browser smoke harness for LinkedIn-style, Gmail-style, and fallback compose analysis and branch insertion without depending on a stale external API process
 
 ## What Exists Today
 

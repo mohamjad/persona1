@@ -53,7 +53,9 @@ const state = {
   dragStartY: 0,
   dragInitialOffsetX: 0,
   dragInitialOffsetY: 0,
-  lastComposeSignature: null
+  lastComposeSignature: null,
+  lastRenderMarkup: "",
+  lastContextSignature: null
 };
 
 if (!alreadyLoaded) {
@@ -243,6 +245,7 @@ function refreshContext() {
   state.currentComposeTarget = detected?.composeNode || null;
   state.currentContext = detected ? sanitizeContext(detected) : null;
   state.lastDraft = normalizeComposeValue(state.currentComposeTarget);
+  const nextContextSignature = state.currentContext ? buildContextSignature(state.currentContext, state.lastDraft) : null;
   const nextSignature = state.currentComposeTarget ? getComposeSignature(state.currentComposeTarget) : null;
   if (nextSignature !== state.lastComposeSignature) {
     state.lastComposeSignature = nextSignature;
@@ -252,6 +255,7 @@ function refreshContext() {
     state.launcherDragActive = false;
     state.launcherDragMoved = false;
   }
+  state.lastContextSignature = nextContextSignature;
   renderUi();
 }
 
@@ -406,8 +410,8 @@ async function analyzeCurrentDraft() {
       onboardingDone: true
     };
     state.analysis = response.analysis;
-    state.selectedOptionId = recommendedOptionId(response.analysis.branches);
-    state.hoverOptionId = state.selectedOptionId;
+    state.selectedOptionId = null;
+    state.hoverOptionId = null;
     state.lastAppliedBranch = null;
     state.error = "";
     state.status = response.analysis?.draftAssessment?.reason || "move tree ready.";
@@ -518,7 +522,13 @@ function renderUi() {
     return;
   }
 
-  state.shellRoot.innerHTML = `${buildLauncherMarkup()}${state.hudOpen ? buildHudMarkup() : ""}`;
+  const nextMarkup = `${buildLauncherMarkup()}${state.hudOpen ? buildHudMarkup() : ""}`;
+  if (nextMarkup === state.lastRenderMarkup) {
+    return;
+  }
+
+  state.lastRenderMarkup = nextMarkup;
+  state.shellRoot.innerHTML = nextMarkup;
 }
 
 function ensureRoot() {
@@ -587,6 +597,7 @@ function ensureRoot() {
   state.shellRoot.setAttribute("data-p1-shell", "true");
   state.shellRoot.addEventListener("click", onShellClick);
   state.shellRoot.addEventListener("mouseover", onShellMouseOver);
+  state.shellRoot.addEventListener("mouseout", onShellMouseOut);
   state.shellRoot.addEventListener("pointerdown", onShellPointerDown);
   shadow.append(style, state.shellRoot);
   mount.appendChild(state.shadowHost);
@@ -617,6 +628,7 @@ function teardownRoot() {
   state.shadowHost?.remove();
   state.shadowHost = null;
   state.shellRoot = null;
+  state.lastRenderMarkup = "";
 }
 
 async function onShellClick(event) {
@@ -677,12 +689,26 @@ function onShellMouseOver(event) {
   }
 
   const optionId = Number(orbNode.getAttribute("data-option"));
-  if (!Number.isFinite(optionId) || optionId === state.selectedOptionId) {
+  if (!Number.isFinite(optionId) || optionId === state.hoverOptionId) {
     return;
   }
 
   state.hoverOptionId = optionId;
-  state.selectedOptionId = optionId;
+  renderUi();
+}
+
+function onShellMouseOut(event) {
+  const leavingOrb = event.target?.closest?.("[data-p1-orb='true']");
+  if (!leavingOrb || state.selectedOptionId) {
+    return;
+  }
+
+  const nextTarget = event.relatedTarget;
+  if (nextTarget?.closest?.("[data-p1-orb='true']")) {
+    return;
+  }
+
+  state.hoverOptionId = null;
   renderUi();
 }
 
@@ -811,16 +837,22 @@ function buildOutcomeOrb(branch) {
 }
 
 function buildPreviewBubble(branch) {
+  const evidence = (state.analysis?.contextEvidence || []).filter(Boolean);
+  const evidenceMarkup = evidence.length
+    ? `<p data-p1-small="true">${escapeHtml(evidence.join(" - "))}</p>`
+    : "";
   return `
     <div data-p1-preview="true">
       <div data-p1-preview-head="true">
-        <p data-p1-preview-title="true">likely outcome</p>
+        <p data-p1-preview-title="true">how it unfolds</p>
         <span data-p1-badge="true" data-p1-badge-tone="${toneForAnnotation(branch.annotation)}">${escapeHtml(branch.annotation)}</span>
       </div>
       <p data-p1-preview-label="true">${escapeHtml(branch.outcomeLabel)}</p>
       <p data-p1-small="true">${escapeHtml(branch.predictedResponse)}</p>
       <p data-p1-message="true">${escapeHtml(branch.message)}</p>
-      <p data-p1-branch-path="true">${escapeHtml(branch.moveLabel)} · ${escapeHtml(branch.branchPath)}</p>
+      <p data-p1-branch-path="true">${escapeHtml(branch.moveLabel)} - ${escapeHtml(branch.branchPath)}</p>
+      <p data-p1-small="true">tone: ${escapeHtml(state.analysis?.toneTarget || "adapt to context")} - goal: ${escapeHtml(state.analysis?.primaryGoal || "move the conversation forward")}</p>
+      ${evidenceMarkup}
     </div>
   `;
 }
@@ -871,6 +903,7 @@ function computeHudLayout() {
 }
 
 function sanitizeContext(detected) {
+  const rawThreadText = String(detected.rawThreadText || detected.threadSummary || "");
   return {
     platform: detected.platform,
     composeDetected: true,
@@ -883,6 +916,9 @@ function sanitizeContext(detected) {
     inferredWants: detected.inferredWants || "clarity",
     inferredConcerns: detected.inferredConcerns || "confusion",
     threadSummary: detected.threadSummary || "",
+    currentConversationSummary: summarizeThreadText(rawThreadText || detected.threadSummary || ""),
+    recentMessages: extractRecentMessages(rawThreadText, detected.recipientLastMessage),
+    conversationGoalHint: inferConversationGoalHint(detected),
     recipientLastMessage: detected.recipientLastMessage || null,
     contextConfidence: detected.contextConfidence || 50
   };
@@ -894,7 +930,10 @@ function recommendedOptionId(branches) {
 
 function selectedBranch() {
   const optionId = state.hoverOptionId || state.selectedOptionId;
-  return state.analysis?.branches?.find((branch) => branch.optionId === optionId) || state.analysis?.branches?.[0] || null;
+  if (!optionId) {
+    return null;
+  }
+  return state.analysis?.branches?.find((branch) => branch.optionId === optionId) || null;
 }
 
 function toRecipientContext(context) {
@@ -906,6 +945,9 @@ function toRecipientContext(context) {
     relationshipType: context.relationshipType || "acquaintance",
     platform: context.platform || "other",
     threadSummary: context.threadSummary || "",
+    currentConversationSummary: context.currentConversationSummary || context.threadSummary || "",
+    recentMessages: context.recentMessages || [],
+    conversationGoalHint: context.conversationGoalHint || "move the conversation forward without losing leverage",
     recipientLastMessage: context.recipientLastMessage || null,
     inferredWants: context.inferredWants || "clarity",
     inferredConcerns: context.inferredConcerns || "confusion",
@@ -1015,6 +1057,7 @@ function extractLinkedInContext(doc) {
     emotionalStateSignals: [],
     inferredWants: "a concise, competent, low-friction response",
     inferredConcerns: "time cost and vague asks",
+    rawThreadText: thread.innerText || "",
     threadSummary: summarizeThreadText(thread.innerText || ""),
     recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null,
     contextConfidence: 80
@@ -1050,6 +1093,7 @@ function extractGmailContext(doc) {
     emotionalStateSignals: [],
     inferredWants: "clarity and competence",
     inferredConcerns: "friction, ambiguity, and time cost",
+    rawThreadText: thread.innerText || "",
     threadSummary: summarizeThreadText(thread.innerText || ""),
     recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null,
     contextConfidence: 84
@@ -1079,6 +1123,7 @@ function extractTwitterDmContext(doc) {
     emotionalStateSignals: [],
     inferredWants: "clarity and tone control",
     inferredConcerns: "awkwardness or pressure",
+    rawThreadText: thread.innerText || "",
     threadSummary: summarizeThreadText(thread.innerText || ""),
     recipientLastMessage: summarizeThreadText(findLastLine(thread.innerText || "")) || null,
     contextConfidence: 72
@@ -1108,6 +1153,7 @@ function extractSlackContext(doc) {
     emotionalStateSignals: [],
     inferredWants: "clear, low-friction coordination",
     inferredConcerns: "noise and ambiguity",
+    rawThreadText: doc.body?.innerText || "",
     threadSummary: summarizeThreadText(doc.body?.innerText || ""),
     recipientLastMessage: null,
     contextConfidence: 70
@@ -1135,6 +1181,7 @@ function extractDatingAppContext(doc) {
     emotionalStateSignals: [],
     inferredWants: "ease, confidence, and spark without pressure",
     inferredConcerns: "awkwardness, over-investment, and generic lines",
+    rawThreadText: doc.body?.innerText || "",
     threadSummary: summarizeThreadText(doc.body?.innerText || ""),
     recipientLastMessage: null,
     contextConfidence: 58
@@ -1162,6 +1209,7 @@ function extractFallbackContext(doc) {
     emotionalStateSignals: [],
     inferredWants: "clarity",
     inferredConcerns: "awkwardness and confusion",
+    rawThreadText: doc.body?.innerText || "",
     threadSummary: summarizeThreadText(doc.body?.innerText || ""),
     recipientLastMessage: null,
     contextConfidence: 45
@@ -1206,6 +1254,50 @@ function getComposeSignature(target) {
   const id = target.id || "";
   const classes = typeof target.className === "string" ? target.className.split(/\s+/).filter(Boolean).slice(0, 3).join(".") : "";
   return [tag, role, aria, id, classes].join("|");
+}
+
+function buildContextSignature(context, draft) {
+  return JSON.stringify({
+    platform: context?.platform || "other",
+    recipientName: context?.recipientName || "",
+    relationshipType: context?.relationshipType || "acquaintance",
+    currentConversationSummary: context?.currentConversationSummary || "",
+    recentMessages: context?.recentMessages || [],
+    conversationGoalHint: context?.conversationGoalHint || "",
+    draft: String(draft || "").trim()
+  });
+}
+
+function extractRecentMessages(rawThreadText, recipientLastMessage) {
+  const lines = String(rawThreadText || "")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((line, index, items) => items.indexOf(line) === index)
+    .slice(-3);
+
+  if (lines.length > 0) {
+    return lines;
+  }
+
+  return recipientLastMessage ? [String(recipientLastMessage)] : [];
+}
+
+function inferConversationGoalHint(detected) {
+  const lower = `${detected.recipientLastMessage || ""} ${detected.threadSummary || ""}`.toLowerCase();
+  if (/\b(short|brief|summary|version)\b/.test(lower)) {
+    return "earn the next step by making the ask simpler and lower-friction";
+  }
+  if (/\b(call|meeting|demo|chat)\b/.test(lower)) {
+    return "get to a concrete next step without sounding pushy";
+  }
+  if (/\b(price|budget|rate|cost|terms)\b/.test(lower)) {
+    return "protect leverage while clarifying constraints";
+  }
+  if (detected.relationshipType === "romantic") {
+    return "create momentum without sounding over-invested";
+  }
+  return "move the conversation forward without losing leverage";
 }
 
 function insertComposeValue(target, value) {

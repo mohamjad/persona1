@@ -28,7 +28,10 @@ export const RecipientContextSchema = z.object({
   recipientLastMessage: z.string().nullable(),
   inferredWants: z.string(),
   inferredConcerns: z.string(),
-  contextConfidence: z.number().int().min(0).max(100)
+  contextConfidence: z.number().int().min(0).max(100),
+  currentConversationSummary: z.string().optional(),
+  recentMessages: z.array(z.string()).optional(),
+  conversationGoalHint: z.string().optional()
 });
 
 export const MoveAnnotationSchema = z.enum(["!!", "!", "!?", "?!", "?", "??"]);
@@ -57,6 +60,9 @@ export const BranchOptionSchema = z.object({
 
 export const BranchTreeSchema = z.object({
   situationRead: z.string().min(1),
+  contextEvidence: z.array(z.string().min(1)).min(1).max(3),
+  toneTarget: z.string().min(1),
+  primaryGoal: z.string().min(1),
   draftAssessment: DraftAssessmentSchema,
   branches: z
     .array(BranchOptionSchema)
@@ -91,6 +97,10 @@ export const AnalyzeRequestSchema = z.object({
 });
 
 export const AnalyzeResponseSchema = z.object({
+  situationRead: z.string().min(1),
+  contextEvidence: z.array(z.string().min(1)).min(1).max(3),
+  toneTarget: z.string().min(1),
+  primaryGoal: z.string().min(1),
   draftAssessment: DraftAssessmentSchema,
   branches: BranchTreeSchema.shape.branches,
   personaVersionUsed: z.number().int().positive(),

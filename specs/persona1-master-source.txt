@@ -1,0 +1,866 @@
+
+persona1
+Pre-Implementation Master Document
+UX + Infrastructure + Scoring Architecture + Anti-Drift Governance  ·  March 2026
+
+This document covers everything that must be resolved before the product is implemented properly. It synthesises both research reports (UX infrastructure and open-source intelligence infrastructure), the current repo state, and the scoring/database architecture decisions locked in through conversation. Read it before writing any new code.
+
+Table of Contents
+Section 1 — Current State Audit: what works, what is broken, what blocks real users
+Section 2 — The Scoring Problem: why the annotation layer is disconnected and how to fix it
+Section 3 — UX Architecture: everything wrong with the current feel and the full stack to fix it
+Section 4 — Infrastructure Layers: intelligence, memory, database, and pipeline upgrades
+Section 5 — GCP Architecture: what goes where on your existing infrastructure
+Section 6 — Full Dependency Registry: every package, license, phase, and source
+Section 7 — Anti-Drift Governance: rules that keep the system clean as it grows
+Section 8 — Implementation Order: exactly what to build, when, and what done means
+
+Section 1  ·  Current State Audit
+What works, what is broken, what blocks real users
+
+1.1 What Is Real and Verified
+Component
+Status
+Chrome extension side-panel
+Working — cold start, compose detection, branch rendering, option insertion, outcome capture, mirror surfacing, local scorecard output
+Platform extractors
+On disk and wired — LinkedIn, Gmail, X DMs, Slack, dating-app, fallback. Heuristic. Not hardened against live DOM variants.
+OpenRouter inference
+/v1/analyze backed by OpenRouter (DeepSeek V3). Strict contract parsing present. Provider-backed persona update and mirror paths exist.
+Local persona storage
+Chrome storage. Versioned JSONB blob. Local-first for free users. Sync-ready for paid.
+Observation logging
+Draft raw/final, option chosen, outcome signal logged. Passive. Silent.
+Billing
+Stripe boundary implemented. Checkout opens browser tab — not embedded.
+Auth
+local_hmac stub. Firebase-compatible JWT boundary exists. Not live Firebase.
+Backend API
+Node/TypeScript Cloud Run. All routes present: analyze, persona update, persona sync, mirror check, auth, billing, usage, health.
+Persona updater / mirror
+Deterministic first-pass. Not real inference calls. Learning loop is not live.
+Chess annotation layer
+!! / ? / ?? symbols working in real time. Pattern matching against generic heuristics. Not connected to recipient context, goal, or persona.
+ELO / scoring
+Not implemented. Discussed. Not built.
+Build / test suite
+corepack pnpm test green. Extension validation passes.
+
+1.2 The Three Hard Blockers
+These three gaps block any real user from completing the full loop. Nothing else matters until these are resolved.
+
+local_hmac must become live Firebase Auth before a single paid user touches the product. Every paid route goes through JWT verification. This is not negotiable.
+Persona updater and mirror are deterministic stubs. The product thesis — it gets smarter over time — is false until these are real inference calls. The learning loop does not exist yet.
+The annotation layer scores messages in isolation. It has zero connection to: what the user wants, who they&apos;re talking to, the persona profile, or the situation preset. It is evaluating grammar and sentiment and calling it strategy. This is why it feels wrong.
+
+1.3 What Feels Clunky and Why
+Problem
+Root cause
+Fix location
+Annotation gives wrong symbols
+No goal / recipient / persona connection. Evaluates message quality not strategic fit.
+Section 2 — Scoring Architecture
+Sidebar feels bolted onto pages
+No CSS isolation. Host page styles bleed into extension UI and vice versa.
+Section 3 — Shadow DOM
+Transitions feel generic
+AutoAnimate only. No deliberate motion language for hero interactions.
+Section 3 — Motion library
+Branches feel slow to appear
+No background prefetch. User hits shortcut and waits for API.
+Section 3 — Dexie cache + prefetch
+Text feels off on some sites
+Font loading not isolated. Host page fonts bleed in.
+Section 3 — Font bundling
+Keyboard shortcuts feel unresponsive
+No visual confirmation on keypress. Selection does not animate.
+Section 3 — tinykeys + Motion
+Branch predictions feel like fanfiction
+Predicted responses are asserted not simulated. No recipient model.
+Section 4 — Branch intelligence
+Persona does not improve over time
+Updater is deterministic. No real inference.
+Section 1.2 blocker #2
+
+Section 2  ·  The Scoring Problem
+Why the annotation is disconnected and the full fix
+
+2.1 What Is Wrong
+The current annotation layer is a standalone process that evaluates the user&apos;s draft message independently of everything else the system knows. It does not receive the persona profile. It does not receive the recipient context. It does not know the situation preset or the user&apos;s goal for this conversation. It is essentially a sentiment and grammar checker wearing a chess annotation costume.
+This is why sending a perfectly calibrated message still gets a ?? — the system has no idea what &apos;correct&apos; looks like for this specific user talking to this specific person in this specific situation. The symbol is meaningless because it has no reference point.
+
+The fix is architectural, not a prompt improvement. The annotation layer must become a downstream consumer of the full pipeline context — the same inputs that branch_generator receives — not a parallel process with none of that context.
+
+2.2 The Target Architecture: Parameterized Scoring
+The right architecture splits the scoring into two layers that run at different times with different costs.
+
+Layer 1 — Parameterization (once per conversation, ~1 API call)
+When persona1 detects a compose context and establishes the conversation parameters, one LLM call runs that outputs a scoring config for this specific conversation. This config is cached for the session. It costs tokens once, not on every keystroke.
+
+// Parameterization output schema
+{
+  &quot;primary_goal&quot;: &quot;get a yes to the meeting&quot;,
+  &quot;conversation_phase&quot;: &quot;close&quot;,
+  &quot;tone_target&quot;: &quot;warm-direct&quot;,
+  &quot;blunder_patterns&quot;: [
+    &quot;apology opener&quot;,
+    &quot;defensive language&quot;,
+    &quot;too many options given&quot;,
+    &quot;over-explanation of reasoning&quot;
+  ],
+  &quot;mistake_patterns&quot;: [
+    &quot;hedging before direct ask&quot;,
+    &quot;passive voice on the ask&quot;
+  ],
+  &quot;interesting_patterns&quot;: [
+    &quot;reframe of their concern as your feature&quot;,
+    &quot;callback to earlier in thread&quot;
+  ],
+  &quot;brilliant_patterns&quot;: [
+    &quot;direct ask with single reason, no alternatives&quot;,
+    &quot;setup that makes them ask the question you want&quot;
+  ],
+  &quot;recipient_risk_factors&quot;: [
+    &quot;responds negatively to pressure&quot;,
+    &quot;high formality preference&quot;
+  ],
+  &quot;persona_risk_factors&quot;: [
+    &quot;user tends to hedge before asks&quot;,
+    &quot;user over-explains under uncertainty&quot;
+  ]
+}
+
+Layer 2 — Real-Time Deterministic Scoring (every keystroke, zero API calls)
+The rule engine takes the session scoring config and evaluates the current draft against it locally. No network call. No tokens. Runs in under 5ms. Returns a symbol and a one-line reason.
+
+Library
+json-rules-engine (MIT) — TypeScript rule engine that takes a JSON fact set and evaluates against a JSON rule config. Exactly right for this pattern.
+Input
+{ draft, scoring_config, persona_patterns, draft_length_vs_baseline }
+Output
+{ symbol: &apos;!!&apos; | &apos;!&apos; | &apos;!?&apos; | &apos;?&apos; | &apos;??&apos; | &apos;-&apos;, reason: string, confidence: 0-1 }
+Trigger
+Debounced 100ms on every keystroke in the compose box
+Fallback
+If scoring_config not yet loaded, show &apos;-&apos; (neutral). Never block the user.
+
+Layer 3 — LLM Arbitration (only when deterministic is ambiguous)
+When the rule engine returns confidence < 0.6 or conflicting signals, a lightweight LLM call fires. It receives the deterministic score as input plus the draft and asks a narrow question — not &apos;is this a good message&apos; but &apos;given these specific signals, confirm or override the annotation.&apos; This keeps the LLM in the loop for edge cases without making it the primary evaluator.
+
+2.3 The Parameterization Prompt
+This prompt fires once when the compose context loads. It receives persona profile + recipient context + situation preset. It outputs the scoring config that drives the entire annotation session.
+
+SYSTEM:
+You are the scoring configuration engine for persona1.
+You receive: the sender&apos;s calibrated persona profile, the extracted recipient context,
+and the situation preset for this conversation.
+
+Your job: output a scoring config that the real-time annotation engine will use
+to evaluate every draft this user sends in this conversation.
+
+This config must reflect:
+- What success looks like for this specific goal with this specific person
+- What patterns from the sender&apos;s profile are liabilities in this context
+- What the recipient&apos;s signals suggest they react negatively to
+- What moves are brilliant vs blunder specifically for this situation type
+
+Be specific. Generic patterns (e.g. &apos;be confident&apos;) are not useful.
+Name exact linguistic and structural patterns that the rule engine can check.
+
+Output ONLY valid JSON matching the ScoringConfig schema. No commentary.
+
+PERSONA: {PERSONA_JSON}
+RECIPIENT_CONTEXT: {CONTEXT_JSON}
+PRESET: {PRESET}
+
+2.4 Training Data for Non-Robotic Scoring
+The parameterization prompt should be augmented with a curated few-shot library of real conversation examples. Not fine-tuning — a retrieved example set that the prompt samples based on the detected conversation type. This is what makes the scoring feel like it understands conversation dynamics rather than just text patterns.
+
+Few-shot library sources
+Negotiation transcripts — Never Split the Difference case studies, real recorded sales calls, FBI hostage negotiation examples
+Dating conversation analysis — documented conversations with outcome annotation, academic literature on attraction and rapport-building
+Professional communication — email case studies, pitch recordings with known outcomes
+Conflict resolution — mediation transcripts, difficult conversation frameworks (Crucial Conversations, Radical Candor)
+
+These get embedded, stored in pgvector, and retrieved by conversation type at parameterization time. The prompt receives 3-5 relevant examples that ground the scoring config in real outcomes, not abstract principles.
+
+Storage
+pgvector on Cloud SQL — embed each example, retrieve top-k by cosine similarity to current preset + recipient type
+Embedding model
+text-embedding-3-small via OpenRouter — cheap, accurate for semantic similarity
+Retrieval trigger
+Parameterization call — retrieve before generating scoring config, inject as few-shot examples
+Library size
+Start with 50-100 curated examples per major preset. Grows over time from user outcomes.
+GCP storage
+pgvector table in existing Cloud SQL instance. No new infrastructure.
+
+Section 3  ·  UX Architecture
+Everything wrong with the current feel and the full stack to fix it
+
+Source: Premium UI infrastructure research report. The three highest-leverage UX changes are: (1) Shadow DOM isolation, (2) deliberate motion language with Motion, (3) local caching for perceived zero latency. Everything else is polish on top of these three.
+
+3.1 The Three Immediate Fixes
+Fix 1 — Shadow DOM Isolation (highest leverage)
+The single biggest cause of clunky is CSS collision. Host page styles break the sidebar. Extension styles break the host page. This is not fixable with better CSS — it requires architectural isolation.
+
+Pattern
+Shadow DOM for all injected UI — orb dock, branch tree, annotation glyph, settings popup
+Blueprint
+WXT createShadowRootUi (MIT) — explicit ShadowRoot UI mode with cssInjectionMode: &apos;ui&apos;
+Alternative
+Iframe injection for sites with extremely hostile CSS. Use as fallback, not default.
+Key constraint
+Portals and popovers must mount inside the ShadowRoot, not document.body. Radix primitives need configuration for this.
+Result
+Spacing, fonts, colors become consistent everywhere. Random brokenness disappears.
+
+// Pattern: mount all extension UI inside shadow root
+const shadowRoot = document.createElement(&apos;div&apos;)
+shadowRoot.attachShadow({ mode: &apos;open&apos; })
+document.body.appendChild(shadowRoot)
+
+// All extension CSS scoped to shadow root
+// Host page CSS cannot reach extension elements
+// Extension CSS cannot reach host page elements
+
+Fix 2 — Motion Language (Motion library)
+AutoAnimate is already in the repo. It handles incidental list transitions well. It cannot express the deliberate motion language the product needs. Keep AutoAnimate for quiet transitions. Add Motion for hero interactions.
+
+Library
+motiondivision/motion (MIT) — hybrid WAAPI + JS engine, springs, stagger, layout-aware transitions
+Dock open/close
+Spring animation. Not linear. Not ease-in-out. Spring with stiffness 300, damping 25. Feels physical.
+Branch card reveal
+Staggered entrance. Card 1 at 0ms, card 2 at 60ms, card 3 at 120ms. Each slides up 8px and fades in.
+Annotation glyph appearance
+Scale from 0.7 to 1.0 with spring. Duration 180ms. Weight feels intentional.
+Selection confirmation
+Brief highlight flash on selected card. 200ms. Then sidebar collapses.
+Loading shimmer
+CSS-only skeleton shimmer on branch cards while prefetch is running.
+Bundle note
+Motion can add ~34KB gzip. Tree-shake aggressively. Import only what is used.
+
+// Example: branch card stagger reveal
+animate(&apos;.branch-card&apos;, 
+  { opacity: [0, 1], y: [8, 0] },
+  { delay: stagger(0.06), duration: 0.22, easing: spring({ stiffness: 300, damping: 25 }) }
+)
+
+Fix 3 — Perceived Zero Latency (Dexie cache + prefetch)
+The user should never see a loading state when they open the branch tree. The branches must already be there. This requires a background prefetch triggered by typing, not by the keyboard shortcut.
+
+Prefetch trigger
+800ms after typing stops (debounced). Background API call. User has not asked yet.
+Cache location
+Dexie.js IndexedDB table: branch_cache keyed by (session_id, draft_hash). TTL 5 minutes.
+On shortcut open
+Check cache first. If hit: show cached branches instantly with a subtle &apos;updated X seconds ago&apos; badge. If miss: show skeleton shimmer, resolve in <800ms.
+Stale cache handling
+Show stale branches immediately (dimmed, marked &apos;updating&apos;). Swap in fresh results when ready. No blank state ever.
+Parameterization cache
+Scoring config cached in Dexie by (session_id). Never regenerated mid-session unless preset changes.
+
+3.2 Full UX Stack
+UI Mounting and Isolation
+Layer
+Package
+License
+Purpose
+Shadow DOM
+WXT createShadowRootUi (pattern)
+MIT
+Isolate all extension UI from host page CSS
+Extension framework
+wxt-dev/wxt
+MIT
+MV3-compatible build, entrypoints, HMR in dev
+Build tooling
+crxjs/vite-plugin
+MIT
+Vite + MV3 correctness, fast iteration
+Iframe fallback
+Native browser iframe
+—
+For extremely hostile host pages
+
+Component System
+Layer
+Package
+License
+Purpose
+Primitives
+radix-ui/primitives
+MIT
+Accessible headless UI — dialogs, tooltips, select
+Components
+shadcn/ui (owned in repo)
+MIT
+Linear-ish dense sidebar components, customisable
+Color system
+radix-ui/colors
+MIT
+Refined dark gray ramp, single accent, alpha variants
+Dark mode
+Radix Themes dark mode
+MIT
+Built dark from ground up, not inverted light mode
+
+Animation
+Layer
+Package
+License
+Purpose
+Hero interactions
+motiondivision/motion
+MIT
+Dock expand, card stagger, glyph pop, selection
+Incidental transitions
+formkit/auto-animate (existing)
+MIT
+List changes, quiet layout transitions
+Loading states
+CSS-only shimmer (custom)
+—
+Skeleton cards during branch prefetch
+
+Positioning and Annotation
+Layer
+Package
+License
+Purpose
+Overlay positioning
+floating-ui/floating-ui
+MIT
+Anchor dock to compose box with collision detection
+Caret positioning
+component/textarea-caret-position
+MIT
+Premium caret-adjacent glyph placement
+Selection utilities
+timdown/rangy
+MIT
+Contenteditable range helpers for annotation injection
+Compose detection
+QuivrHQ/auto-correct (pattern only)
+No license confirmed — reference only
+Architecture reference for multi-editor annotation
+
+Keyboard and Interaction
+Layer
+Package
+License
+Purpose
+Global shortcuts
+jamiebuilds/tinykeys
+MIT
+Cmd+Shift+Space, 1/2/3, Esc — clean MV3-safe
+React hotkeys
+JohannesKlauss/react-hotkeys-hook
+MIT
+Scoped hotkeys inside injected React UI
+Command palette
+dip/cmdk
+MIT
+Future: keyboard-driven mode/preset selection
+
+Typography
+Role
+Font choice
+Primary (messages, branches)
+Geist Sans (Vercel) — high legibility at small sizes, clean at density
+Secondary (metadata, risk, keybindings)
+Geist Mono — terminal-like, Bloomberg-adjacent, precise
+Alternative pairing
+Inter + JetBrains Mono — proven in devtools contexts
+Loading strategy
+Bundle font files as extension assets. Declare in web_accessible_resources. No FOUT.
+Do not use
+System fonts (inconsistent across host pages). Google Fonts CDN (MV3 CSP issues).
+
+Local Storage
+Package
+dexie/Dexie.js (Apache-2.0)
+Tables
+persona, interactions, observations, mirror_insights, branch_cache, scoring_config_cache, usage, settings
+Why not chrome.storage.local
+Untyped, not queryable, no transactions, no indexes. Dexie gives all four.
+Sync
+Dexie local-first. Observation queue syncs to Cloud SQL when user is on paid plan.
+
+Message Bus
+Package
+serversideup/webext-bridge (MIT)
+Why
+Four extension contexts (service worker, content script, sidebar, popup) with untyped messages = subtle MV3 bugs. webext-bridge gives typed protocols.
+Protocol
+Defined once in packages/ai-kernel/messages.ts. All contexts import the same types.
+
+3.3 The Annotation Glyph — Technical Spec
+The chess annotation symbol is the most sensitive UI surface. It must appear as if it belongs to the compose surface, not painted on top of it.
+
+Positioning
+Relative to compose box bounding rect. Absolute positioned to top-right of active compose field. Not caret-adjacent at MVP (too fragile across editors). Caret-adjacent as v2 once stable.
+Container
+Small floating element injected into ShadowRoot. Not injected into the host compose DOM.
+Symbol rendering
+Large, weighted, using Geist Mono. Scale spring animation on appearance. Color coded: !! = blue, ! = green, !? = amber, ? = amber, ?? = red, - = neutral gray.
+Appearance timing
+Debounced 100ms after typing stops. Disappears when compose field loses focus.
+Reason tooltip
+Appears on hover over the symbol. One sentence. Floating UI positioned above symbol.
+Sizing
+Symbol: 18px Geist Mono, bold. Container: 28px × 28px. Subtle background circle.
+
+Section 4  ·  Infrastructure Layers
+Intelligence, memory, database, and pipeline upgrades
+
+Source: Open-source infrastructure research report. Every package listed here has been researched, licensed, and ranked for fit with persona1&apos;s specific constraints. Phase numbers correspond to Section 8 implementation order.
+
+4.1 Contract Enforcement — Phase 1
+Package
+BoundaryML/baml (Apache-2.0)
+Source
+Research report p.9 — ranked #1 highest leverage infrastructure addition
+What it does
+Schema-first prompting language that turns LLM calls into typed functions with automatic retry on malformed output. Explicit OpenRouter support.
+What it fixes
+Branch outputs must be parsed against strict contracts per architecture docs. Currently done with brittle try/catch. BAML makes this structural.
+Integration
+Migrate context_extractor and branch_generator into BAML function definitions. Generate TypeScript clients. Wire into packages/ai-kernel.
+BAML schemas needed
+ContextOutput, BranchTree, PersonaUpdateOutput, MirrorOutput, ScoringConfig, AnnotationOutput
+
+4.2 Scoring Rule Engine — Phase 1
+Package
+json-rules-engine (MIT)
+What it does
+JSON-defined rule engine for TypeScript. Takes a fact set and evaluates against a rule configuration. Returns matched rules and priority ordering.
+What it fixes
+The annotation scoring layer. Rules are generated by the parameterization call and evaluated locally on every draft change. Zero API calls on the hot path.
+Integration
+packages/scoring-engine. Takes ScoringConfig JSON from parameterization + current draft facts. Returns AnnotationOutput.
+Rule categories
+blunder_patterns (??), mistake_patterns (?), interesting_patterns (!?), good_patterns (!), brilliant_patterns (!!)
+
+4.3 Memory Architecture — Phase 4
+pgvector
+PostgreSQL license — vector similarity search inside existing Cloud SQL. No new datastore. Add embedding column to interactions and new persona_shards table.
+mem0ai/mem0
+Apache-2.0 — memory policy layer. search(query, user_id) retrieves relevant persona shards. add(messages, user_id) creates memories from interactions. mem0-ts directory confirms TypeScript support.
+Few-shot library
+pgvector table of curated conversation examples. Embedded with text-embedding-3-small. Retrieved at parameterization time by cosine similarity.
+What this replaces
+Full persona JSONB blob injection on every call. Selective shard retrieval reduces tokens 30-50% while improving relevance.
+Entry condition
+50+ users with 20+ interactions each. Not before.
+
+4.4 Context Understanding — Phase 3
+transformers.js
+Apache-2.0 — local ONNX inference in Node API. Run sentiment + emotion pre-classification on recipient&apos;s last message before LLM context extraction call. Reduces entropy before paying tokens.
+microsoft/RecognizersText
+MIT — deterministic entity extraction. Dates, times, amounts, deadlines as structured fields. Injected into context extraction prompt as trusted data.
+aurelio-labs/semantic-router
+MIT — embedding-based dialogue act classification. Classify short messages (&apos;k&apos;, &apos;sure&apos;, &apos;let&apos;s talk&apos;) into actionable dialogue states without LLM call.
+
+4.5 ELO Rating System — Phase 5
+Package
+philihp/openskill.js (MIT)
+Source
+Research report p.17 — ranked #1, actively maintained March 2026
+What it does
+Bayesian Weng-Lin rating. Models uncertainty (mu, sigma). Handles sparse interactions better than plain ELO. Supports recipient difficulty weighting.
+Difficulty mapping
+stranger > acquaintance > colleague for relationship. cold_outreach > linkedin > dating_app for platform. negotiate > pitch > date for stakes.
+Virality mechanic
+Communication ELO shown in popup. Scorecard shareable. &apos;Finally broke 1400 in cold outreach&apos; is organic content.
+
+4.6 Branch Intelligence — Phase 6
+LangGraphJS
+MIT — graph-based workflow orchestration for the full extract → model → branch → simulate → rank pipeline
+Tree-of-Thought pattern
+MIT — principled candidate generation, evaluation, and pruning. Port BFS/DFS + value/vote pattern to TypeScript.
+Lookahead simulation
+For each branch: generate message → run recipient model call → simulate one response → score 2-move sequence. Predicted responses become actual inference, not assertions.
+Entry condition
+Solid outcome data from phases 2-5. Need to know what &apos;good&apos; looks like empirically before scoring rollouts.
+
+Section 5  ·  GCP Architecture
+What goes where on existing infrastructure
+
+5.1 Existing GCP Resources (already in use)
+Resource
+Current use
+Cloud Run
+apps/persona1-api — serverless API, scales to zero
+Cloud SQL (Postgres)
+users, personas, interactions, mirror_insights tables
+Secret Manager
+OPENROUTER_API_KEY, STRIPE_SECRET, DB_URL, FIREBASE_SERVICE_ACCOUNT
+Cloud Logging
+Request logs, error tracking, usage metrics
+Firebase Auth
+JWT boundary exists, not live yet — blocker #1
+
+5.2 GCP Additions by Phase
+Phase
+GCP change
+Notes
+Phase 1
+None — all changes are code-level
+BAML, Dexie, webext-bridge are library additions only
+Phase 2
+Firebase Auth — enable in existing GCP project
+Add firebase-admin to Cloud Run. No new GCP services.
+Phase 3
+Cloud Run memory increase for transformers.js models
+ONNX models cached in instance memory. Increase Cloud Run memory limit to 2GB.
+Phase 4
+pgvector extension on existing Cloud SQL instance
+ALTER SYSTEM. No new Cloud SQL instance. Add persona_shards and few_shot_examples tables via migration.
+Phase 4
+Cloud Storage bucket for ONNX model cache
+Optional — cache transformers.js models in GCS if Cloud Run restarts are frequent.
+Phase 5
+None — openskill.js is in-process computation
+ELO stored in users table column. No new infrastructure.
+Phase 6
+Cloud Tasks for async lookahead simulation
+Branch lookahead runs as async task, not inline. Results cached in Dexie/Cloud SQL.
+Phase 7
+Apache AGE extension on Cloud SQL
+Graph extension on same Postgres instance. Requires Cloud SQL Postgres 14+.
+
+5.3 Cloud SQL Schema Additions
+Phase 1 — No changes
+
+Phase 2 — firebase_uid column
+ALTER TABLE users ADD COLUMN firebase_uid TEXT UNIQUE;
+
+Phase 4 — pgvector + persona shards + few-shot library
+CREATE EXTENSION IF NOT EXISTS vector;
+
+ALTER TABLE interactions ADD COLUMN embedding vector(1536);
+
+CREATE TABLE persona_shards (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  shard_type TEXT, -- &apos;trait&apos; | &apos;tactic&apos; | &apos;recipient_pattern&apos; | &apos;weakness&apos; | &apos;strength&apos;
+  content TEXT NOT NULL,
+  embedding vector(1536),
+  platform TEXT,
+  recipient_archetype TEXT,
+  confidence NUMERIC(4,3) DEFAULT 0.5,
+  data_point_count INTEGER DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX ON persona_shards USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+CREATE TABLE few_shot_examples (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  preset TEXT NOT NULL,
+  recipient_archetype TEXT,
+  situation_description TEXT NOT NULL,
+  example_content TEXT NOT NULL,
+  outcome_signal TEXT, -- &apos;positive&apos; | &apos;negative&apos;
+  source TEXT, -- &apos;curated&apos; | &apos;user_derived&apos;
+  embedding vector(1536),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX ON few_shot_examples USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+
+Phase 5 — ELO rating columns
+ALTER TABLE users ADD COLUMN elo_mu NUMERIC(8,4) DEFAULT 25.0;
+ALTER TABLE users ADD COLUMN elo_sigma NUMERIC(8,4) DEFAULT 8.333;
+ALTER TABLE users ADD COLUMN elo_ordinal NUMERIC(8,4) DEFAULT 0.0;
+ALTER TABLE interactions ADD COLUMN recipient_difficulty_estimate NUMERIC(4,3);
+ALTER TABLE interactions ADD COLUMN elo_delta NUMERIC(8,4);
+
+Section 6  ·  Full Dependency Registry
+Every package, license, phase, and source
+
+Every production dependency requires an ADR in docs/adr/ before the PR is merged. Packages marked &apos;Phase 1&apos; should be in the next PR. Packages marked &apos;pending ADR&apos; need ADR written first.
+
+Package
+License
+Phase
+Source / ADR
+@boundaryml/baml
+Apache-2.0
+1
+Research PDF p.9 — ADR-002
+json-rules-engine
+MIT
+1
+Scoring architecture — ADR-003
+dexie/Dexie.js
+Apache-2.0
+1
+Research PDF p.20 — ADR-004
+serversideup/webext-bridge
+MIT
+1
+Research PDF p.21 — ADR-005
+motiondivision/motion
+MIT
+1
+UX PDF p.3 — ADR-006
+floating-ui/floating-ui
+MIT
+1
+UX PDF p.10 — ADR-007
+jamiebuilds/tinykeys
+MIT
+1
+UX PDF p.8 — ADR-008
+component/textarea-caret-position
+MIT
+1
+UX PDF p.10 — ADR-009
+firebase-admin
+Apache-2.0
+2
+Auth blocker — ADR-010
+firebase (client)
+Apache-2.0
+2
+Auth blocker — ADR-011
+radix-ui/primitives
+MIT
+1
+UX PDF p.6 — ADR-012
+radix-ui/colors
+MIT
+1
+UX PDF p.6 — ADR-013
+@xenova/transformers
+Apache-2.0
+3
+Research PDF p.7 — ADR-014 pending
+microsoft/RecognizersText
+MIT
+3
+Research PDF p.7 — ADR-015 pending
+aurelio-labs/semantic-router
+MIT
+3
+Research PDF p.8 — ADR-016 pending
+pgvector
+PostgreSQL license
+4
+Research PDF p.4 — ADR-017 pending
+mem0ai/mem0
+Apache-2.0
+4
+Research PDF p.2 — ADR-018 pending
+philihp/openskill.js
+MIT
+5
+Research PDF p.17 — ADR-019 pending
+langchain-ai/langgraphjs
+MIT
+6
+Research PDF p.12 — ADR-020 pending
+dip/cmdk
+MIT
+future
+UX PDF p.8 — ADR-021 pending
+apache/age
+Apache-2.0
+7
+Research PDF p.5 — ADR-022 pending
+graphology/graphology
+MIT
+7
+Research PDF p.5 — ADR-023 pending
+
+6.1 Explicitly Excluded — Forever
+These will be suggested. They must be declined. Adding any of these requires a full team discussion and a compelling written case.
+
+Any AGPL-licensed package in shipped code — MiroFish (AGPL-3.0), Lichess/Chessground (GPL-3). Commercial product killer.
+GSAP — not MIT/Apache. License requires legal review. Use Motion instead.
+A separate vector database (Pinecone, Weaviate, Qdrant) — we extend Postgres with pgvector. One datastore.
+Python in the application kernel — TypeScript monorepo. Python only as offline analytics sidecar.
+LangChain in the hot path — framework gravity, hidden abstractions. Use BAML for contracts, LangGraphJS for orchestration.
+Full model fine-tuning — solved by prompt engineering, memory retrieval, and bandits.
+Distribution logic in the application kernel — extension never knows about AI-OS or social posting.
+thoughtworks/simplebandit — archived June 2025. Do not use.
+
+Section 7  ·  Anti-Drift Governance
+Rules that keep the system clean as it grows
+
+The biggest risk is not technical. It is drift — features added without respecting the stage pipeline, infrastructure added without ADRs, prompt contracts changed without updating schemas, distribution logic in the application kernel. This section defines rules that prevent it.
+
+7.1 The Six Drift Failure Modes
+Failure mode
+How it happens
+Prevention
+Stage pipeline violation
+New feature bypasses context_extractor or persona_loader to save a round trip.
+Every inference path goes through all stages. Stage skip requires ADR.
+Scoring disconnected from pipeline
+Annotation layer evaluates message quality instead of strategic fit against goal + recipient + persona.
+Parameterization config is the session&apos;s source of truth. Rule engine consumes it. LLM arbitration only on ambiguity.
+Distribution in product
+Social posting, persona account config, or AI-OS workflow code appears in apps/persona1-ext or apps/persona1-api.
+Hard boundary: distribution lives exclusively in businesses/persona1/social-*.yaml. Zero imports from distribution in application kernel.
+Schema drift
+Branch output schema changes in BAML but UI render code not updated. Or persona JSON changes but persona_updater prompt still references old fields.
+Schema changes require: BAML update + migration + UI update + prompt update. All four in same PR.
+Doc/code divergence
+current-state.md says something is implemented but the code still runs a stub.
+Every PR changing behavior includes a docs/ update. current-state.md reviewed on every merge.
+Dependency sprawl
+New package added without ADR. Six months later nobody knows why.
+Every new package-level dependency requires ADR before PR merges.
+
+7.2 PR Checklist — Mandatory Before Every Merge
+Does this PR stay within its declared phase? No Phase 4 infra in a Phase 1 PR.
+If adding a new dependency: is the ADR written and merged first?
+If changing a prompt contract: are BAML schema, UI render code, and prompt all updated in this PR?
+If changing persona JSON structure: is the migration written and persona_updater prompt updated?
+If adding scoring rule: is it in the rule engine, not in the annotation prompt?
+If touching distribution logic: does it stay in businesses/persona1? Is the application kernel unaware of it?
+Is current-state.md still accurate after this merge?
+Does corepack pnpm test still pass?
+Is extension validation still green?
+Is the Shadow DOM isolation intact? No extension styles escaping to host page?
+
+7.3 The Canonical Pipeline Contract
+Stage
+Contract
+context_extractor
+Input: raw page DOM. Output: ContextOutput (BAML-typed). Runs once per session, cached. Fallback: manual paste.
+parameterizer
+Input: PersonaProfile + ContextOutput + preset. Output: ScoringConfig (BAML-typed). Runs once per session, cached in Dexie. Drives annotation layer for entire session.
+persona_loader
+Input: user_id + ContextOutput. Output: calibrated PersonaProfile. Phase 4+: retrieves relevant shards via mem0, not full blob. Fallback: full profile.
+branch_generator
+Input: PersonaProfile + ContextOutput + draft + preset. Output: BranchTree (BAML-typed, exactly 3 branches). Never called without both persona and context.
+annotation_engine
+Input: ScoringConfig + current draft. Output: AnnotationOutput (symbol + reason + confidence). Runs deterministically via json-rules-engine. Zero API calls. LLM arbitration only at confidence < 0.6.
+persona_updater (async)
+Input: PersonaProfile + interaction + outcome signal. Output: updated PersonaProfile. Runs after outcome capture. Never blocks UI.
+mirror_trigger (async)
+Input: interaction log. Output: string[] of insights (may be empty). Fires at interaction_count % 25 === 0. Only surfaces patterns with 5+ data points.
+
+Section 8  ·  Implementation Order
+Exactly what to build, when, and what done means
+
+Each phase has a hard entry condition and a hard exit condition. A phase is not done until its exit condition is met. Do not start the next phase until the current one is complete.
+
+Phase 1 — Structural Foundation
+Before any user touches this. Estimated: this week.
+
+Task
+What to build
+Exit condition
+BAML contracts
+Install @boundaryml/baml. Define all six schemas. Generate TypeScript clients. Replace raw JSON.parse calls.
+No UI crash from malformed LLM output. Branch output always matches schema or returns typed error.
+Shadow DOM isolation
+Mount all extension UI inside ShadowRoot. WXT pattern. All CSS scoped.
+Extension UI looks identical on Gmail, LinkedIn, Twitter, Notion, and a hostile-CSS host page.
+Dexie storage
+Install Dexie. Define all tables. Replace chrome.storage.local for persona, interactions, observations, mirror_insights, branch_cache, scoring_config_cache.
+Persona profile survives extension reload. Branch cache queryable by session_id + draft_hash.
+webext-bridge
+Install webext-bridge. Define typed message protocol in packages/ai-kernel/messages.ts. Replace all chrome.runtime.sendMessage calls.
+No untyped messages in codebase. TypeScript catches protocol mismatches at compile time.
+Motion language
+Install Motion. Implement: dock spring open/close, branch card stagger, glyph scale pop, selection confirmation. Remove GSAP if present.
+Opening the branch tree with Cmd+Shift+Space feels deliberate and fast. Not bouncy. Not linear.
+Floating UI
+Install floating-ui. Replace hardcoded annotation positioning with floating-ui anchored to compose box bounding rect.
+Annotation glyph stays anchored to compose box through scroll, zoom, and responsive layout shifts.
+tinykeys
+Install tinykeys. Replace existing shortcut handlers.
+All keyboard shortcuts work cleanly in injected environment without propagation to host page.
+json-rules-engine
+Install json-rules-engine. Build packages/scoring-engine. Stub ScoringConfig with hardcoded rules for date/pitch/negotiate presets.
+Annotation symbol changes when draft changes. Blunder patterns for each preset return ?? correctly.
+ADRs
+Write ADR-002 through ADR-013.
+Every Phase 1 package has an ADR in docs/adr/. current-state.md updated.
+
+Phase 2 — Real Learning Loop
+Before any paid user. Estimated: week 2.
+
+Task
+What to build
+Exit condition
+Firebase Auth
+Enable Firebase Auth in GCP. Add firebase-admin to API. Replace local_hmac middleware. Add sign-in UI to popup.
+New user can sign up, complete 3 free analyses, hit paywall, pay, and use unlimited — all with real Firebase JWT.
+Real persona updater
+Implement persona_updater BAML function. Wire outcome capture → POST /v1/persona/update → inference → update Dexie + Cloud SQL.
+After 10 real interactions with outcome signals, persona JSON shows observable changes. Version increments.
+Real mirror trigger
+Implement mirror_trigger BAML function. Wire at interaction_count % 25. Enforce 5-data-point threshold.
+After 25 real interactions, at least one insight fires if threshold met. Insight appears in sidebar.
+Parameterization call
+Implement parameterizer BAML function. Fire when compose context detected. Cache ScoringConfig in Dexie by session_id.
+Scoring config is generated within 2 seconds of compose context detection. Cached for session.
+Branch prefetch
+Trigger background branch_generator call 800ms after typing stops. Cache in Dexie branch_cache.
+Cmd+Shift+Space returns branches instantly from cache >80% of the time. Skeleton shown on cache miss.
+
+Phase 3 — Context Hardening
+Week 2-3. After first real users.
+
+Task
+What to build
+Exit condition
+transformers.js pre-classification
+Add @xenova/transformers to API. Run sentiment pre-classification on recipient last message. Inject as structured field.
+Context extraction LLM call receives pre-classified sentiment. Token count for extraction decreases.
+RecognizersText entities
+Add deterministic entity extraction for dates, amounts, deadlines. Inject as trusted fields.
+Scheduling cues and amounts extracted without LLM call. Context extraction prompt receives them as facts.
+Annotation accuracy
+Connect ScoringConfig parameterization output to real persona + recipient context. Retire stub hardcoded rules.
+Annotation symbols differ meaningfully based on recipient context. Same draft gets ?? on a cold pitch to a stranger and ! on a warm reconnect to a colleague.
+Few-shot library seed
+Curate initial 50-100 conversation examples per preset. Embed and load into pgvector table.
+Parameterization prompt retrieves relevant examples. Output quality demonstrably improves on edge cases.
+
+Phase 4 — Memory Architecture
+Month 1. After first 50 paying users.
+
+Task
+What to build
+Exit condition
+pgvector migration
+Add vector extension to Cloud SQL. Run persona_shards and few_shot_examples migrations.
+Migration runs without downtime. pgvector queries return results in <100ms.
+mem0 integration
+Integrate mem0-ts in persona_loader. Replace full profile injection with selective shard retrieval.
+For users with 100+ interactions, tokens injected into branch_generator decreases 30%. No degradation in goal_alignment_score.
+
+Phase 5 — ELO System
+Month 1. After memory architecture.
+
+Task
+What to build
+Exit condition
+openskill.js integration
+Add ELO columns to users table. Compute rating update on every outcome signal. Show in popup.
+Every user has visible rating that moves based on outcome + recipient difficulty. Scorecard shareable.
+
+Phase 6 — Branch Intelligence
+Month 2-3.
+
+Task
+What to build
+Exit condition
+LangGraphJS pipeline
+Migrate stage orchestration to LangGraphJS. Explicit graph with state persistence.
+Pipeline stages are explicit graph nodes. State is inspectable. Failures are recoverable.
+Lookahead simulation
+Implement 1-turn recipient model call per branch. Score 2-move sequence.
+Predicted responses are inference outputs. Chess tree is genuinely predictive, not asserted.
+
+
+persona1 pre-implementation master document  ·  apps/persona1  ·  world1 monorepo  ·  March 2026

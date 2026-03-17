@@ -39,7 +39,9 @@ Start here:
 - [docs/current-state.md](/C:/Users/moham/persona1/docs/current-state.md)
 - [specs/persona1-source-of-truth-plan.md](/C:/Users/moham/persona1/specs/persona1-source-of-truth-plan.md)
 - [specs/persona1-phased-build-plan.md](/C:/Users/moham/persona1/specs/persona1-phased-build-plan.md)
+- [specs/persona1-master-phase-plan.md](/C:/Users/moham/persona1/specs/persona1-master-phase-plan.md)
 - [specs/persona1-spec-v2-source.txt](/C:/Users/moham/persona1/specs/persona1-spec-v2-source.txt)
+- [specs/persona1-master-source.txt](/C:/Users/moham/persona1/specs/persona1-master-source.txt)
 - [specs/open-questions.md](/C:/Users/moham/persona1/specs/open-questions.md)
 
 ## Current Operating Model
@@ -50,7 +52,7 @@ The current product direction is:
 
 The current live implementation is local-first by default, with server-backed sync, billing, and durable storage available when runtime credentials are supplied.
 
-The active MVP UI is an injected compose-surface orb dock rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the three outcome orbs rendered directly on that writing surface, then click an orb or hit `1`, `2`, or `3` to apply a move. The selected orb shows how the conversation is likely to unfold, the closed-state icon hides while the dock is open and can be dragged or dismissed, and the transitions are smoothed with `@formkit/auto-animate`. Cold start and preset selection are inferred from context instead of being exposed in the normal flow.
+The active MVP UI is an injected compose-surface orb dock rather than Chrome's native side panel. The main interaction is: focus a draft, click the circular move icon or press `Ctrl/Cmd+Shift+Space`, inspect the three outcome orbs rendered directly on that writing surface, then click an orb or hit `1`, `2`, or `3` to apply a move. The dock opens collapsed by default, the selected or hovered orb shows how the conversation is likely to unfold, the closed-state icon hides while the dock is open and can be dragged or dismissed, and the transitions are smoothed with `@formkit/auto-animate`. Cold start and preset selection are inferred from context instead of being exposed in the normal flow. Conversation-local context is now sent separately from broader profile tone so the model can weight the live thread first.
 
 ## Local Runtime
 
@@ -58,7 +60,7 @@ Start the local API:
 
 - `corepack pnpm start:api`
 
-Run the extension smoke with OpenRouter:
+Run the self-contained browser smoke:
 
 - `corepack pnpm smoke:extension`
 

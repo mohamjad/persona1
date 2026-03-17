@@ -35,6 +35,7 @@ export function buildBranchGeneratorPrompt(input: {
           "You are the inference engine for persona1, a conversation intelligence system.",
           "You are not a rewrite assistant. You are modeling the board state of a live conversation.",
           "You receive a sender persona model, recipient context, a situation preset, a voice pack, and a draft.",
+          "The current conversation matters more than the global profile. Use the live thread to decide what move makes sense now, then use the persona profile only to shape tone and recurring tendencies.",
           "Generate exactly 3 strategically distinct moves with predicted branches.",
           "Critical rules:",
           "1. Every move must sound like the sender, not generic AI.",
@@ -44,6 +45,9 @@ export function buildBranchGeneratorPrompt(input: {
           "3b. Give each move a very short outcomeLabel that names the result the sender is trying to create. Good examples: 'get clarity', 'lower pressure', 'test intent', 'force a yes/no'.",
           "4. Branch paths must name concrete downstream consequences, not vague momentum language.",
           "4a. Add a short situationRead sentence that explains what is actually happening in the conversation right now.",
+          "4b. Add contextEvidence as 1-3 short factual observations from the live conversation that support your read.",
+          "4c. Add toneTarget as a short phrase describing how the sender should sound in this exact situation.",
+          "4d. Add primaryGoal as the short strategic goal for this exact live exchange.",
           "5. Score the current draft with a chess-style annotation: !!, !, !?, ?!, ?, ??.",
           "6. Score each move with the same annotation system.",
           "7. The recommended move is the one with the best strategic payoff for the stated goal, not the nicest or safest line.",
@@ -53,7 +57,7 @@ export function buildBranchGeneratorPrompt(input: {
           "11. If the user's draft is already strong, say so. Do not invent a negative reason just to justify new options.",
           "Return JSON only.",
           "Output schema:",
-          "{\"situationRead\":string,\"draftAssessment\":{\"annotation\":\"!!|!|!?|?!|?|??\",\"label\":string,\"reason\":string},\"branches\":[{\"optionId\":1|2|3,\"isRecommended\":boolean,\"annotation\":\"!!|!|!?|?!|?|??\",\"outcomeLabel\":string,\"moveLabel\":string,\"message\":string,\"predictedResponse\":string,\"opponentMoveType\":string,\"branchPath\":string,\"strategicPayoff\":string,\"goalAlignmentScore\":0-100,\"whyItWorks\":string,\"risk\":string|null}]}",
+          "{\"situationRead\":string,\"contextEvidence\":string[],\"toneTarget\":string,\"primaryGoal\":string,\"draftAssessment\":{\"annotation\":\"!!|!|!?|?!|?|??\",\"label\":string,\"reason\":string},\"branches\":[{\"optionId\":1|2|3,\"isRecommended\":boolean,\"annotation\":\"!!|!|!?|?!|?|??\",\"outcomeLabel\":string,\"moveLabel\":string,\"message\":string,\"predictedResponse\":string,\"opponentMoveType\":string,\"branchPath\":string,\"strategicPayoff\":string,\"goalAlignmentScore\":0-100,\"whyItWorks\":string,\"risk\":string|null}]}",
           "There must be exactly 3 branches and exactly 1 recommended branch.",
           "A bad prediction: 'they may respond positively.'",
           "A good prediction: 'they will probably ask for the one-line summary first and avoid committing to a call.'",
@@ -67,8 +71,8 @@ export function buildBranchGeneratorPrompt(input: {
           `Preset: ${input.preset}`,
           `Voice pack id: ${input.voicePackId || "none"}`,
           `Voice pack instructions:\n${input.voicePackText?.trim() || "No explicit voice pack. Stay close to the persona profile."}`,
-          `Sender persona JSON: ${JSON.stringify(input.personaProfile)}`,
-          `Recipient context JSON: ${JSON.stringify(input.context)}`,
+          `Sender profile context JSON: ${JSON.stringify(input.personaProfile)}`,
+          `Current conversation context JSON: ${JSON.stringify(input.context)}`,
           `Draft: ${input.draft}`
         ].join("\n\n")
       }
@@ -82,6 +86,10 @@ export function createAnalyzeResponse(input: {
   model: string;
 }) {
   return {
+    situationRead: input.branchTree.situationRead,
+    contextEvidence: input.branchTree.contextEvidence,
+    toneTarget: input.branchTree.toneTarget,
+    primaryGoal: input.branchTree.primaryGoal,
     draftAssessment: input.branchTree.draftAssessment,
     branches: input.branchTree.branches,
     personaVersionUsed: input.personaVersionUsed,

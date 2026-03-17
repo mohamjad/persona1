@@ -55,9 +55,11 @@ assert(address && typeof address === "object");
 const baseUrl = `http://127.0.0.1:${address.port}`;
 
 let apiProcess;
+let apiServer;
 let context;
+let apiBaseUrl;
 try {
-  apiProcess = await ensureApiReady();
+  ({ apiProcess, apiServer, apiBaseUrl } = await ensureApiReady());
   context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
     args: [
@@ -65,6 +67,7 @@ try {
       `--load-extension=${extensionPath}`
     ]
   });
+  await configureExtensionForSmoke(context, apiBaseUrl);
 
   await runScenario({
     context,
@@ -97,6 +100,7 @@ try {
 } finally {
   await context?.close().catch(() => null);
   apiProcess?.kill();
+  apiServer?.close();
   server.close();
   await fs.rm(userDataDir, { recursive: true, force: true }).catch(() => null);
 }
@@ -136,6 +140,13 @@ async function runScenario(input) {
     return Boolean(root?.querySelector('[data-p1-orb="true"]'));
   }, { timeout: 60000 });
 
+  const initialHudText = await page.evaluate(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return root?.querySelector('[data-p1-hud="true"]')?.innerText || "";
+  });
+  assert.doesNotMatch(initialHudText, /how it unfolds/i);
+  assert.doesNotMatch(initialHudText, /undefined/i);
+
   const overlayPlacement = await page.evaluate((selector) => {
     const compose = document.querySelector(selector);
     const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
@@ -167,7 +178,25 @@ async function runScenario(input) {
     return root?.querySelector('[data-p1-hud="true"]')?.innerText || "";
   });
 
-  assert.match(panelText, /likely outcome/i);
+  assert.match(panelText, /recommended|play/i);
+  assert.doesNotMatch(panelText, /undefined/i);
+
+  await page.evaluate(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    const orb = root?.querySelector('[data-p1-orb="true"]');
+    orb?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  });
+
+  await page.waitForFunction(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return /how it unfolds/i.test(root?.querySelector('[data-p1-hud="true"]')?.innerText || "");
+  });
+
+  const previewText = await page.evaluate(() => {
+    const root = document.querySelector("[data-persona1-root]")?.shadowRoot;
+    return root?.querySelector('[data-p1-hud="true"]')?.innerText || "";
+  });
+  assert.match(previewText, /how it unfolds/i);
   assert.match(panelText, /recommended|play/i);
   assert.doesNotMatch(panelText, /cold start/i);
 
@@ -194,48 +223,183 @@ async function runScenario(input) {
 }
 
 async function ensureApiReady() {
-  if (await canReachApi()) {
-    return null;
+  if (!process.env.PERSONA1_SMOKE_REAL_API) {
+    return startMockApi();
   }
 
   if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error("persona1 API is not running, and OPENROUTER_API_KEY is not set for starting a local API.");
+    if (await canReachApi("http://127.0.0.1:8787")) {
+      return { apiProcess: null, apiServer: null, apiBaseUrl: "http://127.0.0.1:8787" };
+    }
+    throw new Error("OPENROUTER_API_KEY is not set for starting a clean local API, and no existing API is reachable.");
   }
 
+  const apiPort = await allocatePort();
+  const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
   const child = spawn(process.execPath, ["dist/apps/persona1-api/src/main.js"], {
     cwd: repoRoot,
     stdio: "pipe",
     env: {
       ...process.env,
-      PORT: process.env.PORT || "8787"
+      PORT: String(apiPort)
     }
   });
 
-  const started = await waitForApi();
+  const started = await waitForApi(apiBaseUrl);
   if (!started) {
     child.kill();
-    throw new Error("persona1 API did not become healthy in time.");
+    throw new Error(`persona1 API did not become healthy in time on ${apiBaseUrl}.`);
   }
 
-  return child;
+  return { apiProcess: child, apiServer: null, apiBaseUrl };
 }
 
-async function canReachApi() {
+async function canReachApi(apiBaseUrl) {
   try {
-    const response = await fetch("http://127.0.0.1:8787/v1/health");
+    const response = await fetch(`${apiBaseUrl}/v1/health`);
     return response.ok;
   } catch {
     return false;
   }
 }
 
-async function waitForApi() {
+async function waitForApi(apiBaseUrl) {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
-    if (await canReachApi()) {
+    if (await canReachApi(apiBaseUrl)) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   return false;
+}
+
+async function allocatePort() {
+  const probe = http.createServer((_request, response) => response.end("ok"));
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address();
+  assert(address && typeof address === "object");
+  const port = address.port;
+  await new Promise((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+  return port;
+}
+
+async function configureExtensionForSmoke(context, apiBaseUrl) {
+  let serviceWorker = context.serviceWorkers()[0];
+  if (!serviceWorker) {
+    serviceWorker = await context.waitForEvent("serviceworker");
+  }
+
+  await serviceWorker.evaluate(async (baseUrl) => {
+    await chrome.storage.local.clear();
+    await chrome.storage.local.set({
+      p1_settings: {
+        apiBaseUrl: baseUrl,
+        keyboardShortcutsEnabled: true,
+        autoOpenSidebar: true
+      },
+      p1_usage_count: 0,
+      p1_plan: "free",
+      p1_onboarding_done: false
+    });
+  }, apiBaseUrl);
+}
+
+function startMockApi() {
+  const mockServer = http.createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/v1/health") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        ok: true,
+        service: "persona1-api",
+        provider: "mock",
+        model: "mock-branch-engine"
+      }));
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/v1/analyze") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        situationRead: "they want a tighter summary before deciding whether to continue the thread",
+        contextEvidence: [
+          "they asked for the short version first",
+          "the current draft sounds like generic follow-up language"
+        ],
+        toneTarget: "direct and calm",
+        primaryGoal: "earn a low-friction next step",
+        draftAssessment: {
+          annotation: "?!",
+          label: "soft edge",
+          reason: "the draft is too generic to control the next move"
+        },
+        branches: [
+          {
+            optionId: 1,
+            isRecommended: true,
+            annotation: "!!",
+            outcomeLabel: "get clarity",
+            moveLabel: "tighten the ask",
+            message: "want the one-line version or the two-minute version?",
+            predictedResponse: "they pick one and reveal whether the thread is actually alive",
+            opponentMoveType: "forced choice",
+            branchPath: "choice -> clarity -> next step",
+            strategicPayoff: "turns a vague thread into a concrete decision",
+            goalAlignmentScore: 90,
+            whyItWorks: "it lowers friction without surrendering frame",
+            risk: null
+          },
+          {
+            optionId: 2,
+            isRecommended: false,
+            annotation: "!",
+            outcomeLabel: "test intent",
+            moveLabel: "hold frame",
+            message: "before i write the longer version, are you still seriously considering this or just curious?",
+            predictedResponse: "they either qualify themselves or drift away",
+            opponentMoveType: "intent test",
+            branchPath: "pressure -> qualification -> answer",
+            strategicPayoff: "surfaces intent quickly",
+            goalAlignmentScore: 76,
+            whyItWorks: "it trades smoothness for clarity",
+            risk: "can feel sharp if the thread is still warm"
+          },
+          {
+            optionId: 3,
+            isRecommended: false,
+            annotation: "!?",
+            outcomeLabel: "lower pressure",
+            moveLabel: "make it easy",
+            message: "easy version: it helps teams stop losing time to vague follow-up loops.",
+            predictedResponse: "they acknowledge it, but the thread may stay passive",
+            opponentMoveType: "low-friction acknowledgment",
+            branchPath: "easy answer -> passive reply -> weak reopen",
+            strategicPayoff: "keeps the thread alive with low resistance",
+            goalAlignmentScore: 62,
+            whyItWorks: "it removes effort from the recipient",
+            risk: "can preserve ambiguity instead of resolving it"
+          }
+        ],
+        personaVersionUsed: 1,
+        provider: "mock",
+        model: "mock-branch-engine"
+      }));
+      return;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "Not found." }));
+  });
+
+  return new Promise((resolve) => {
+    mockServer.listen(0, "127.0.0.1", () => {
+      const address = mockServer.address();
+      assert(address && typeof address === "object");
+      resolve({
+        apiProcess: null,
+        apiServer: mockServer,
+        apiBaseUrl: `http://127.0.0.1:${address.port}`
+      });
+    });
+  });
 }

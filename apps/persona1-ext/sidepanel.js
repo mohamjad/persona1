@@ -375,7 +375,7 @@ function renderContextSummary(snapshot) {
     <strong>${escapeHtml(snapshot.platform)}</strong><br />
     ${snapshot.recipientName ? `Recipient: ${escapeHtml(snapshot.recipientName)}<br />` : ""}
     Confidence: ${snapshot.contextConfidence}<br />
-    ${escapeHtml(snapshot.threadSummary || "No thread summary available.")}
+    ${escapeHtml(snapshot.currentConversationSummary || snapshot.threadSummary || "No thread summary available.")}
   `;
 }
 
@@ -388,6 +388,9 @@ function toRecipientContext(snapshot) {
     relationshipType: snapshot.relationshipType || "acquaintance",
     platform: snapshot.platform || "other",
     threadSummary: snapshot.threadSummary || "",
+    currentConversationSummary: snapshot.currentConversationSummary || snapshot.threadSummary || "",
+    recentMessages: snapshot.recentMessages || [],
+    conversationGoalHint: snapshot.conversationGoalHint || "move the conversation forward without losing leverage",
     recipientLastMessage: snapshot.recipientLastMessage || null,
     inferredWants: snapshot.inferredWants || "clarity",
     inferredConcerns: snapshot.inferredConcerns || "confusion",
